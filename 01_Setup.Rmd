@@ -1,0 +1,758 @@
+---
+title: "Setup"
+output: html_document
+date: "2026-08-28"
+---
+
+
+
+
+# ------------------------- Setup
+
+# This .Rmd file must be run on the first place (before the other .Rmd files), as the first step for reproducing the code.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(warning = FALSE, message = FALSE)
+```
+
+```{r paths}
+## ---------------------------------------------------------------------------
+## USER: set this to the directory where you unpacked the FigShare archive.
+## ---------------------------------------------------------------------------
+# Create a direcotry called 'base_dir' in your home directory.
+base_dir <- file.path(getwd(), "base_dir")
+dir.create(base_dir,      showWarnings = FALSE, recursive = TRUE)
+
+# Create the following paths and subdirectories inside of 'base_dir':
+figshare_dir    <- file.path(base_dir, "figshare")
+plot_dir      <- file.path(base_dir, "plots")
+models_dir      <- file.path(base_dir, "models")
+processed_dir <- file.path(base_dir, "processed")
+
+dir.create(figshare_dir,      showWarnings = FALSE, recursive = TRUE)
+dir.create(plot_dir,      showWarnings = FALSE, recursive = TRUE)
+dir.create(file.path(plot_dir, "delta_RT_singles_doubles"), showWarnings = FALSE, recursive = TRUE)
+dir.create(file.path(plot_dir, "delta_RT_chimeras"), showWarnings = FALSE, recursive = TRUE)
+dir.create(models_dir,      showWarnings = FALSE, recursive = TRUE)
+dir.create(processed_dir, showWarnings = FALSE, recursive = TRUE)
+
+# Download the Figshare files in 'figshare' directory.
+
+FIGSHARE_ID <- 33368479
+zip_path    <- file.path(base_dir, "figshare_data.zip")
+
+# Skip if the data is already there:
+if (length(list.files(figshare_dir)) == 0) {
+
+  old_timeout <- getOption("timeout")
+  options(timeout = 3600)
+  on.exit(options(timeout = old_timeout), add = TRUE)
+
+  message("Downloading data from FigShare (this may take a while)...")
+  download.file(
+    url      = sprintf("https://ndownloader.figshare.com/articles/%d/versions/3",
+                       FIGSHARE_ID),
+    destfile = zip_path,
+    mode     = "wb"        # required on Windows, harmless elsewhere
+  )
+
+  unzip(zip_path, exdir = figshare_dir)
+  unlink(zip_path)
+}
+```
+
+
+
+# All packages used:
+
+Install (reproduce the .yml file into a conda env. If not using conda, install these packages in your r session):
+```{r libraries}
+# ---- CRAN (31 calls) -------------------------------------------------------
+# cran_packages <- c("rmarkdown", "knitr","data.table", "dplyr", "tidyr", "tibble", "purrr", "stringr","seqinr", "stringdi st", "matrixStats", "caret", "rstatix", "ggplot2", "ggpubr", "scales", "ggridges", "GGally", "ggseqlogo")
+
+#for (pkg in cran_packages) {if (!requireNamespace(pkg, quietly = TRUE)) install.packages(pkg)}
+
+# ---- Bioconductor (2 packages) --------------------------------------------
+#BiocManager::install("biomaRt"); BiocManager::install("rtracklayer")
+
+```
+
+Load pckgs:
+```{r libraries}
+  packages <- c(
+    # Rendering the .Rmd files (RStudio bundles these, a bare env does not)
+    "rmarkdown", "knitr",
+    # Data handling
+    "data.table", "dplyr", "tidyr", "tibble", "purrr", "stringr",
+    # Sequences and strings
+    "seqinr", "stringdist",
+    # Stats and modelling
+    "matrixStats", "caret", "rstatix",
+    # Plotting
+    "ggplot2", "ggpubr", "scales", "ggridges", "GGally", "ggseqlogo"
+  )
+  
+  # Automatically load packages
+  for (pkg in packages) library(pkg, character.only = TRUE)
+  
+  set.seed(1)  # for the random variant sampling below
+```
+
+ggplot layouts:
+```{r plot-theme}
+# Shared ggplot theme.
+p <- theme(
+  text             = element_text(size = 20),
+  plot.title       = element_text(hjust = 0.5),
+  plot.subtitle    = element_text(hjust = 0.5),
+  panel.grid.major = element_blank(),
+  panel.grid.minor = element_blank(),
+  panel.background = element_blank(),
+  axis.line        = element_line(colour = "black"),
+  legend.key       = element_rect(fill = "white"),
+  strip.background = element_rect(colour = "white", fill = "white",
+                                  linewidth = 0, linetype = "solid")
+)
+```
+
+# Palettes:
+```{r palettes}
+# --- Replicate --------------------------------------------------------------
+replicate_Colors <- c("1" = "#34A43B", "2" = "#2B2E33", "3" = "#66B2FF")
+rep_colors <- scale_colour_manual(name = "Rep", values = replicate_Colors)
+rep_fills  <- scale_fill_manual(name = "Rep",
+                                values = alpha(replicate_Colors, alpha = 0.75))
+
+# --- Gene -------------------------------------------------------------------
+gene_Colors <- c("AQP4"    = "#99004C", "OPRK1"   = "#2B2E33",
+                 "MAPK10"  = "#d8b365", "OPRL1"   = "#66B2FF",
+                 "Chimera" = "grey")
+gene_colors <- scale_colour_manual(name = "Gene", values = gene_Colors)
+gene_fills  <- scale_fill_manual(name = "Gene",
+                                 values = alpha(gene_Colors, alpha = 0.75))
+
+# --- Transcript feature -----------------------------------------------------
+transcript_feature_Colors <- c("ORF" = "#34A43B", "3'UTR" = "#2B2E33",
+                               "RT"  = "#66B2FF")
+transcript_features_colors <- scale_colour_manual(
+  name = "Feature", values = transcript_feature_Colors)
+transcript_features_fills <- scale_fill_manual(
+  name = "Feature", values = alpha(transcript_feature_Colors, alpha = 0.2))
+
+# --- Hamming distance -------------------------------------------------------
+hamdist_Colors <- c("0" = "#AB1C37", "1" = "#E20303", "2" = "#FF6666",
+                    "3" = "#F69C9C", "4" = "#FFCCCC")
+hamdist_colors <- scale_colour_manual(name = "Hamming dist",
+                                      values = hamdist_Colors)
+hamdist_fills  <- scale_fill_manual(name = "Hamming dist",
+                                    values = alpha(hamdist_Colors, alpha = 0.5))
+
+# --- Amino-acid property ----------------------------------------------------
+AA_property_Colors <- c("0" = "grey", "1" = "#FF6666")
+AA_property_colors <- scale_colour_manual(name = "AA property",
+                                          values = AA_property_Colors)
+AA_property_fills  <- scale_fill_manual(
+  name = "AA property", values = alpha(AA_property_Colors, alpha = 0.75))
+
+# --- Hamming distance, gene-palette variant ---------------------------------
+HD_Colors <- c("1" = "#99004C", "2" = "#2B2E33",
+               "3" = "#d8b365", "4" = "#66B2FF")
+HD_colors <- scale_colour_manual(name = "HD", values = HD_Colors)
+HD_fills  <- scale_fill_manual(name = "HD",
+                               values = alpha(HD_Colors, alpha = 0.75))
+
+# --- ggseqlogos, nucleotide-palette:
+custom_colors <- make_col_scheme(
+  chars = c('A', 'C', 'G', 'U'),
+  cols  = c("#99004C", "#2B2E33", "#d8b365", "#66B2FF")
+)
+
+
+```
+
+# Variables:
+```{r constants}
+# The non-stop TP53 control variant (should sort almost entirely into P11).
+NONSTOP_CTRL_SEQ <- paste0(
+  "GCCCCTCCTCAGCATCTTATCCGAGTGGAAGGAAATTTGCGTGTGGAGTATTTGGATGACAGAAACACT",
+  "TTTCGACATAGTGTGGTGGTGCCCTATGAGCCGCCTGAGGTTGGCTCTGACTGTACCACCATCCACTAC",
+  "AACTACATG"
+)
+
+# Variant discarded because it is suspected of cryptic splicing.
+CRYPTIC_SPLICING_SEQ <- "GCAATAGATGGGATGAATAAACCATTATGACTAGTCGTGGAGATG"
+
+# WT sequence of each gene (upstream region + stop codon + downstream region).
+WT_SEQS <- c(
+  AQP4   = "AGAGTATTGTCTTCAGTATGACTAGAAGATCGCACT",
+  OPRK1  = "GACATCGATGGGATGAATAAACCAGTATGACTAGTCGTGGAGATG",
+  MAPK10 = "CCCCTGGGTTGTTGCAGGTGACTAGCCGCCTGCCTGCGAAACCCAGCG",
+  OPRL1  = "ACGGTACCGCGGCCCGCATGACTAGGCGTGGACCTG"
+)
+
+
+BINS      <- paste0("p", 4:11)   # all sorting gates
+BINS_USED <- paste0("p", 4:10)   # gates used to compute RT (P11 = non-stop gate)
+```
+
+
+
+
+# ------- Functions
+
+**Scaling function:** it scales the readthrough data to c(0,1), in order to get a well fit of a logistic regression (which is constrained to be bounded to 0,1). After model fitting, we rescale the predictions back to the original distribution, using the rescaling_fc(). Arguments:
+```{r, warning = FALSE}
+    scaling_fc<-function(input, minimum, maximum, output){
+      mn<-input[, min(RT_binomial)] # lower limit of the original distribution
+      mx<-input[, max(RT_binomial)] # upper limit of the original distribution
+      input$RT_binomial<-scales::rescale(input[, RT_binomial], c(0,1)) # Rescale to c(0,1)
+      assign(minimum, mn, envir = .GlobalEnv) # Assign 'min' to the object name specified by the 'minimum' argument.
+      assign(maximum, mx, envir = .GlobalEnv) # Assign 'max' to the object name specified by the 'maximum' argument.
+      assign(output, input, envir = .GlobalEnv) # Assign 'input' to the object name specified by the 'dataframe' argument.
+    }
+```
+
+**Re-scaling function:** Rescales predicted and observed values. Arguments:
+```{r, warning = FALSE}
+    rescaling_fc<-function(input, output){
+      input$predicted<-scales::rescale(input$predicted, c(min,max))*100 # Rescale the predicted values back to its original distribution. Mutiply by 100, to go from RT_binomial to RT.
+      input$observed<-scales::rescale(input$observed, c(min,max))*100 # Rescale the observed values "".
+      assign(output, input, envir = .GlobalEnv) # Assign 'df' to the object name specified by the 'dataframe' argument.
+    }
+```
+
+# --- Hamming distance for 3-mers ---
+```{r, warning = FALSE}
+hamming3 <- function(x, y) {
+  # x and y are character scalars length 3
+  sum(strsplit(x, "", fixed = TRUE)[[1]] != strsplit(y, "", fixed = TRUE)[[1]])
+}
+```
+
+# --- calculate the abs(RT difference) across codons at 1 hamming distance away
+```{r, warning = FALSE}
+rt_diffs_hd1_by_gene <- function(df) {
+
+  df <- df %>%
+    mutate(
+      Mutation = as.character(Mutation),
+      Gene  = as.character(Gene),
+      RT    = as.numeric(RT)
+    ) %>%
+    filter(!is.na(Mutation), nchar(Mutation) == 3, !is.na(Gene), !is.na(RT))
+
+  df %>%
+    group_by(Gene) %>%
+    group_modify(~{
+      d <- .x
+
+      # If you have multiple rows per (Gene, Mutation), decide how to handle it:
+      # Here we take the mean RT per Mutation within Gene (common choice).
+      d <- d %>%
+        group_by(Mutation) %>%
+        dplyr::summarise(
+          RT = mean(RT, na.rm = TRUE),
+          n_obs = n(),
+          aa = dplyr::first(aa),
+          .groups = "drop"
+        )
+
+      if (nrow(d) < 2) return(tibble())
+
+      # All unique unordered pairs of codons
+      pairs <- tidyr::crossing(i = seq_len(nrow(d)), j = seq_len(nrow(d))) %>%
+        dplyr::filter(i < j) %>%
+        dplyr::mutate(
+          codon1 = d$Mutation[i],
+          codon2 = d$Mutation[j],
+          RT1    = d$RT[i],
+          RT2    = d$RT[j],
+          aa1    = d$aa[i],
+          aa2    = d$aa[j],
+          n1     = d$n_obs[i],
+          n2     = d$n_obs[j]
+        ) %>%
+        dplyr::mutate(
+          hd = map2_int(codon1, codon2, hamming3)
+        ) %>%
+        dplyr::filter(hd == 1) %>%
+        dplyr::transmute(
+          codon1, codon2,
+          aa1, aa2,
+          RT1, RT2,
+          RT_diff = RT2 - RT1,      # signed difference (2 - 1)
+          RT_absdiff = abs(RT2 - RT1),
+          n1, n2,
+          hd
+        )
+
+      pairs
+    }) %>%
+    ungroup()
+}
+```
+
+
+
+# --- To fit models for chimera variants
+
+```{r, warning=F, fig.width=5, fig.height=5}
+
+
+## prepare_swap_subset()
+## Applies the project's min-max scaling to a filtered input table and returns the scaled data.table.
+
+prepare_swap_subset <- function(data, tmp_name = ".__scaled_subset__") {
+  scaling_fc(data, "min", "max", tmp_name)
+  out <- get(tmp_name, inherits = TRUE)
+  as.data.table(out)
+}
+
+
+## ---------------------------------------------------------------------------
+## fit_cv_glm()
+##
+## k-fold cross-validated binomial GLM.
+## ---------------------------------------------------------------------------
+fit_cv_glm <- function(data, formula, seed, k = 10) {
+
+  set.seed(seed)
+  folds <- createFolds(data[, RT], k = k, list = TRUE, returnTrain = TRUE)
+
+  R2s       <- numeric(length(folds))
+  pred_list <- vector("list", length(folds))
+  coef_list <- vector("list", length(folds))
+
+  for (i in seq_along(folds)) {
+
+    train_data <- data[folds[[i]], ]
+    test_data  <- data[-folds[[i]], ]
+
+    model <- glm(formula, data = train_data, family = "binomial")
+
+    # Predict on the held-out fold and score it.
+    pred   <- predict(model, test_data, type = "response")
+    R2s[i] <- cor(pred, test_data$RT_binomial)^2
+
+    tmp_predictions <- data.frame(predicted = pred * 100,
+                                  observed  = test_data$RT_binomial * 100)
+    rescaling_fc(tmp_predictions, ".__rescaled_predictions__")
+    pred_list[[i]] <- get(".__rescaled_predictions__", inherits = TRUE)
+
+    # Collect coefficients in long form, keyed by name.
+    co <- coef(model)
+    coef_list[[i]] <- data.table(mutation = names(co),
+                                 value    = as.numeric(co),
+                                 fold     = i)
+  }
+
+  all_coefs <- rbindlist(coef_list)
+  all_coefs[, fold_name := paste0("M", fold)]
+  coeffs <- data.table::dcast(all_coefs, mutation ~ fold_name,
+                              value.var = "value")
+  setDT(coeffs)   # belt and braces
+
+  fold_cols <- paste0("M", seq_along(folds))
+  setcolorder(coeffs, c("mutation", fold_cols))
+
+  # Mean and spread of each coefficient across the k models.
+  coeffs[, coeff    := rowMeans(.SD, na.rm = TRUE),      .SDcols = fold_cols]
+  coeffs[, sd_coeff := apply(.SD, 1, sd, na.rm = TRUE),  .SDcols = fold_cols]
+
+  list(
+    predictions = as.data.table(rbindlist(pred_list)),
+    coeffs      = coeffs,
+    R2s         = R2s,
+    mean_R2     = mean(R2s)
+  )
+}
+
+
+## ---------------------------------------------------------------------------
+## annotate_1st_order()
+##
+## Splits first-order coefficient names into `block` and `gene`.
+## ---------------------------------------------------------------------------
+
+annotate_1st_order <- function(coeffs, swap_terms, block_labels, short_levels) {
+
+  coeffs <- copy(coeffs)
+
+  # Default split: cut after a digit that is followed by more non-digits.
+  parts <- str_split_fixed(coeffs$mutation, "(?<=\\d)(?=.*\\D)", 2)
+  block <- parts[, 1]
+  gene  <- parts[, 2]
+
+  # The listed swap terms are split on "swaps" instead.
+  swap_rows <- coeffs$mutation %chin% swap_terms
+  if (any(swap_rows)) {
+    sp <- str_split_fixed(coeffs$mutation[swap_rows], "swaps", 2)
+    block[swap_rows] <- sp[, 1]
+    gene[swap_rows]  <- sp[, 2]
+  }
+
+  # "(Intercept)" matches neither pattern -> no gene.
+  gene[gene == ""] <- NA_character_
+
+  coeffs[, gene        := gene]
+  coeffs[, block_short := factor(block_labels[block], levels = short_levels)]
+  coeffs[, block       := factor(block, levels = names(block_labels))]
+
+  setnames(coeffs, "coeff", "Coefficients")
+  coeffs[]
+}
+
+
+## ---------------------------------------------------------------------------
+## annotate_2nd_order()
+##
+## Splits second-order coefficient names into `Mut1` and `Mut2` and shortens the
+## block names for plotting, e.g.
+## ---------------------------------------------------------------------------
+
+annotate_2nd_order <- function(coeffs, block_from, block_to,
+                               swap_from, swap_to,
+                               mut1_levels = NULL, mut2_levels = NULL) {
+
+  coeffs <- copy(coeffs)
+  coeffs[, mutation := gsub("swaps", "", mutation, fixed = TRUE)]
+
+  # Interaction terms are "termA:termB"; main effects have no colon.
+  parts <- str_split_fixed(coeffs$mutation, ":", 2)
+  m1 <- parts[, 1]
+  m2 <- parts[, 2]
+  m2[m2 == ""] <- NA_character_   
+
+  shorten <- function(x) {
+    x <- gsub(block_from, block_to, x, fixed = TRUE)
+    x <- gsub(swap_from,  swap_to,  x, fixed = TRUE)
+    # Insert "_" after the 3-character block tag: "DB1MAPK10" -> "DB1_MAPK10"
+    x <- paste0(substr(x, 1, 3), "_", substr(x, 4, nchar(x)))
+    gsub(paste0(swap_to, "__"), paste0(swap_to, "_"), x, fixed = TRUE)
+  }
+
+  m1 <- shorten(m1)
+  m2 <- shorten(m2)
+  m1[m1 == "NA_NA"] <- NA_character_
+  m2[m2 == "NA_NA"] <- NA_character_
+
+  coeffs[, Mut1 := if (is.null(mut1_levels)) m1 else factor(m1, levels = mut1_levels)]
+  coeffs[, Mut2 := if (is.null(mut2_levels)) m2 else factor(m2, levels = mut2_levels)]
+
+  coeffs[]
+}
+
+
+## ---------------------------------------------------------------------------
+## Plot helpers
+## ---------------------------------------------------------------------------
+
+## Predicted vs observed scatter
+plot_pred_obs <- function(predictions, title) {
+  ggplot(predictions, aes(x = observed, y = predicted)) +
+    geom_point(alpha = .7) +
+    labs(x = "Observed", y = "Predicted", title = title) + p +
+    theme(plot.title = element_text(size = 16)) +
+    stat_cor(aes(label = after_stat(rr.label)), size = 6)
+}
+
+## First-order coefficient heatmap: block x gene.
+plot_coeffs_1st_order <- function(coeffs, title) {
+  ggplot(coeffs[block != "(Intercept)"], aes(x = block_short, y = gene)) +
+    geom_tile(aes(fill = Coefficients)) +
+    scale_fill_gradient2(low = "red", mid = "white", high = "blue",
+                         midpoint = 0) + p +
+    theme(axis.text.x  = element_text(),
+          axis.title   = element_blank(),
+          plot.title   = element_text(size = 18),
+          legend.position = "bottom") +
+    ggtitle(title)
+}
+
+## Second-order interaction heatmap: Mut1 x Mut2
+plot_coeffs_2nd_order <- function(coeffs,
+                                  na_value = "black",
+                                  y_top    = 8.5,
+                                  hline_y  = c(0.5, 3.5, 6.5, 8.5)) {
+
+  vlines <- data.frame(
+    x    = seq(0.5, 10, by = 3),
+    y    = c(0.5, 0.5, 3.5, 6.5),
+    yend = rep(y_top, 4)
+  )
+  hlines <- data.frame(
+    y    = hline_y,
+    x    = rep(0.5, 4),
+    xend = c(3.5, 6.5, 9.5, 9.5)
+  )
+
+  ggplot(coeffs[!is.na(Mut1) & !is.na(Mut2)],
+         aes(x = Mut1, y = Mut2, fill = coeff)) +
+    geom_tile() +
+    scale_fill_gradient2(low = "red", mid = "white", high = "blue",
+                         na.value = na_value, name = "Coeffs") +
+    labs(x = "Mutation 1", y = "Mutation 2") + p +
+    theme(text         = element_text(size = 16),
+          axis.title.x = element_blank(),
+          axis.title.y = element_blank(),
+          axis.text.y  = element_text(size = 10),
+          axis.text.x  = element_text(size = 10, angle = 90,
+                                      vjust = 0.5, hjust = 1),
+          legend.position = c(0.9, 0.3)) +
+    geom_segment(data = vlines,
+                 aes(x = x, xend = x, y = y, yend = yend),
+                 inherit.aes = FALSE,
+                 linetype = "dashed", colour = "black", linewidth = 0.3) +
+    geom_segment(data = hlines,
+                 aes(x = x, xend = xend, y = y, yend = y),
+                 inherit.aes = FALSE,
+                 linetype = "dashed", colour = "black", linewidth = 0.3)
+}
+
+```
+
+
+# ----- ΔRT vs starting_RT plots
+
+# Double mutants:
+
+```{r plot-all-pred-pdf}
+## Mutations that create a stop codon in the WT context, so must be excluded.
+STOP_CREATING <- data.table(
+  Gene = c("AQP4", "OPRK1", "MAPK10"),
+  pos  = c(4, 10, 12),
+  nt   = c("T", "T", "A")
+)
+
+DOUBLE_TYPES <- c("double_mutants_downstream_+1/+10nts",
+                  "double_mutants_11-15nts_downstream")
+
+
+## Drop stop-creating mutations, checking both position slots.
+drop_stop_mutations <- function(dt, stop_tbl = STOP_CREATING) {
+  for (s in seq_len(nrow(stop_tbl))) {
+    for (i in 1:2) {
+      pcol <- paste0("Position_mutated_", i)
+      mcol <- paste0("Mutation_", i)
+      if (!pcol %in% names(dt)) next
+      dt <- dt[!(Gene == stop_tbl$Gene[s] &
+                   !is.na(get(pcol)) & get(pcol) == stop_tbl$pos[s] &
+                   !is.na(get(mcol)) & get(mcol) == stop_tbl$nt[s])]
+    }
+  }
+  dt
+}
+
+
+## ---------------------------------------------------------------------------
+## mutation_delta_plots() -> Prints each plot and returns them invisibly as a named list.
+## ---------------------------------------------------------------------------
+mutation_delta_plots <- function(dt, gene, out_dir, min_reads = 100,
+                                 stop_tbl = STOP_CREATING,
+                                 width = 5, height = 5) {
+
+  dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
+
+  # WT downstream sequence, used to label the title with the WT nucleotide.
+  wt <- strsplit(dt[Gene == gene & WT == "yes" & reads > min_reads,
+                    unique(downstream_seq)], "")[[1]]
+
+  # Single mutants: the backgrounds.
+  singles <- unique(dt[Mutation_type == "Single_mutants_downstream_allnts" &
+                         reads > min_reads & Gene == gene & replicate == 1],
+                    by = "nt_seq")
+  singles <- drop_stop_mutations(singles, stop_tbl)
+  singles <- singles[, .(mut         = paste0(Position_mutated_1, Mutation_1),
+                         start_RT    = RT,
+                         start_RT_sd = sd_RT)]
+
+  # Double mutants.
+  doubles <- unique(dt[Mutation_type %in% DOUBLE_TYPES &
+                         reads > min_reads & Gene == gene & replicate == 1],
+                    by = "nt_seq")
+  doubles <- drop_stop_mutations(doubles, stop_tbl)
+  doubles[, mut1 := paste0(Position_mutated_1, Mutation_1)]
+  doubles[, mut2 := paste0(Position_mutated_2, Mutation_2)]
+
+  muts   <- sort(unique(c(doubles$mut1, doubles$mut2)))
+  plots  <- list()
+  tables <- list()
+
+  for (a in muts) {
+
+    # Every double containing mutation `a`, oriented so mut2 == a and
+    # mut1 is the background single.
+    k <- doubles[mut1 == a | mut2 == a]
+    k[mut1 == a, c("mut1", "mut2") := .(mut2, a)]
+
+    k <- merge(k, singles, by.x = "mut1", by.y = "mut", all.x = TRUE)
+    k[, delta_RT := RT - start_RT]
+
+    pos   <- as.numeric(gsub("[^0-9]", "", a))
+    alt   <- gsub("[0-9]", "", a)
+    title <- bquote(.(gene) ~ bold(.(paste0(pos, wt[pos], ">", alt))))
+
+    g <- ggplot(k[PTC == "no" & !is.na(start_RT)],
+                aes(x = start_RT, y = delta_RT, label = mut1)) +
+      geom_point(colour = "#FF6666") +
+      geom_errorbar(aes(ymin = delta_RT - sd_RT, ymax = delta_RT + sd_RT),
+                    width = 0, alpha = 0.4, linewidth = 0.6) +
+      geom_errorbarh(aes(xmin = start_RT - start_RT_sd,
+                         xmax = start_RT + start_RT_sd),
+                     height = 0, alpha = 0.4, linewidth = 0.6) +
+      geom_hline(yintercept = 0, linetype = "dashed") +
+      geom_text(hjust = -0.2, vjust = -0.3, size = 6) +
+      ggtitle(title) + p +
+      theme(text            = element_text(size = 25),
+            axis.text       = element_text(size = 25),
+            axis.title      = element_blank(),
+            plot.title      = element_text(hjust = 0.5),
+            legend.position = "none")
+
+    print(g)
+    ggsave(file.path(out_dir, paste0(a, ".pdf")), g,
+           width = width, height = height)
+
+    plots[[a]]  <- g
+    tables[[a]] <- k    
+  }
+
+  invisible(list(
+    plots = plots,
+    data   = rbindlist(tables, idcol = "focal_mut"),
+    tables = tables
+  ))
+}
+```
+
+
+# Chimeras: Block-swap effect sizes for the chimera library.
+
+## For a given block position (down_block1..3 or up_block1..3), each variant carrying gene `to` at that position is paired with the otherwise-identical variant carrying gene `from`, and the readthrough difference recorded:
+
+
+```{r plot-all-pred-pdf}
+## ---------------------------------------------------------------------------
+## swap_delta_table()
+## ---------------------------------------------------------------------------
+swap_delta_table <- function(swaps, focal, others, swap_col,
+                             genes = c("AQP4", "MAPK10", "OPRK1", "OPRL1")) {
+
+  key_cols <- c(others, swap_col)
+  keep     <- c(focal, key_cols, "RT", "sd_RT")
+  base <- unique(swaps[replicate == 1 & get(swap_col) != "mix"], by = "nt_seq")
+  base <- base[, ..keep]
+
+  out <- list()
+
+  for (g_to in genes) {
+
+    to_dt <- base[get(focal) == g_to]
+    if (nrow(to_dt) == 0L) next
+
+    for (g_from in setdiff(genes, g_to)) {
+
+      from_dt <- base[get(focal) == g_from,
+                      c(key_cols, "RT", "sd_RT"), with = FALSE]
+      setnames(from_dt, c("RT", "sd_RT"), c("starting_RT", "sd_starting_RT"))
+
+      res <- merge(to_dt, from_dt, by = key_cols, all.x = TRUE, sort = FALSE)
+
+      stopifnot(nrow(res) == nrow(to_dt))
+
+      res[, delta_RT  := RT - starting_RT]
+      res[, from_gene := g_from]
+      res[, to_gene   := g_to]
+
+      out[[length(out) + 1L]] <- res
+    }
+  }
+
+  rbindlist(out, use.names = TRUE)
+}
+
+## ---------------------------------------------------------------------------
+## Shared plot layer stack.
+## ---------------------------------------------------------------------------
+swap_layout <- list(
+  geom_point(colour = "#FF6666"),
+  geom_errorbar(aes(ymin = delta_RT - sd_RT, ymax = delta_RT + sd_RT),
+                width = 0, alpha = 0.4, linewidth = 0.6),
+  # NOTE: geom_errorbarh is soft-deprecated in ggplot2 >= 3.5 in favour of
+  # geom_errorbar(orientation = "y"). Kept for compatibility with pinned
+  # versions; switch if your environment warns.
+  geom_errorbarh(aes(xmin = starting_RT - sd_starting_RT,
+                     xmax = starting_RT + sd_starting_RT),
+                 height = 0, alpha = 0.4, linewidth = 0.6),
+  labs(x = "Starting RT", y = "ΔRT"),
+  p,
+  theme(text = element_text(size = 15), plot.title = element_text(hjust = 0.5))
+)
+
+## ---------------------------------------------------------------------------
+## plot_swap_deltas() -> One panel per from/to pair, as a list of ggplots.
+## ---------------------------------------------------------------------------
+plot_swap_deltas <- function(dt, label) {
+  pairs <- unique(dt[, .(from_gene, to_gene)])
+  plots <- lapply(seq_len(nrow(pairs)), function(r) {
+    gf <- pairs$from_gene[r]
+    gt <- pairs$to_gene[r]
+    ggplot(dt[from_gene == gf & to_gene == gt],
+           aes(x = starting_RT, y = delta_RT)) +
+      ggtitle(paste0(label, "_", gf, " > ", gt)) +
+      swap_layout
+  })
+  names(plots) <- paste0(label, "_", pairs$from_gene, "_to_", pairs$to_gene)
+  plots
+}
+
+
+
+## ---------------------------------------------------------------------------
+## save_swap_deltas() -> Writes one .rds per from/to pair
+## ---------------------------------------------------------------------------
+save_swap_deltas <- function(dt, prefix, out_dir, rename_map = NULL) {
+  pairs <- unique(dt[, .(from_gene, to_gene)])
+  for (r in seq_len(nrow(pairs))) {
+    g_from <- pairs$from_gene[r]
+    g_to   <- pairs$to_gene[r]
+    sub    <- dt[from_gene == g_from & to_gene == g_to]
+    if (!is.null(rename_map)) {
+      present <- intersect(names(rename_map), names(sub))
+      setnames(sub, present, unname(rename_map[present]))
+    }
+    saveRDS(sub, file = file.path(
+      out_dir, paste0(prefix, "_from", g_from, "_to_", g_to, ".rds")))
+  }
+  invisible(NULL)
+}
+
+## ---------------------------------------------------------------------------
+## save_swap_delta_plots() -> Writes one PDF per from/to pair:
+## ---------------------------------------------------------------------------
+save_swap_delta_plots <- function(dt, prefix, label, out_dir,
+                                  width = 5, height = 5) {
+
+  dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
+
+  # Same expression as plot_swap_deltas() uses, so the pair order matches the
+  # order of the returned plot list.
+  pairs <- unique(dt[, .(from_gene, to_gene)])
+  plots <- plot_swap_deltas(dt, label)
+
+  dev <- "pdf"
+
+  for (r in seq_len(nrow(pairs))) {
+    ggsave(
+      filename = file.path(out_dir, paste0(prefix,
+                                           "_from", pairs$from_gene[r],
+                                           "_to_", pairs$to_gene[r], ".pdf")),
+      plot   = plots[[r]],
+      width  = width,
+      height = height,
+      device = dev
+    )
+  }
+  invisible(NULL)
+}
+```

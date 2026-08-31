@@ -1,0 +1,257 @@
+---
+title: "Fig1"
+output: html_document
+date: "2026-08-28"
+---
+
+# ----------------------------------------------------------------------------------------
+# ---------------------- Data exploration & quality sanity checks: -----------------------
+# ----------------------------------------------------------------------------------------
+
+```{r, warning=F}
+
+# Coverage:
+  LM_dtbl[, quantile(reads_allbins, c(0.01, 0.02, 0.05, 0.1, 0.25, 0.5, 0.75)), by=replicate] # 2% quantile is 350 reads!
+  plot(ggplot(LM_dtbl, aes(x=reads_allbins, colour=replicate)) + geom_density() + rep_colors + p)
+
+# How many variants with <100 reads?
+  low_cov_vars<-LM_dtbl[reads<100 & !duplicated(nt_seq), ]
+  low_cov_vars[,.N]/LM_dtbl[!duplicated(nt_seq), .N]*100 # 3% of the variants have <100 reads
+  low_cov_vars[Gene=="OPRL1",.N]/low_cov_vars[,.N]*100 # 87.5% of the variats with <100 reads belong to OPRL1.
+  
+# How many variants per gene?
+  LM_dtbl[reads>100 & !duplicated(nt_seq), table(Gene)]
+  LM_dtbl[reads>100 & !duplicated(nt_seq), .N]
+  
+# How many variants per mutation type?
+  LM_dtbl[reads>100 & Gene!="OPRL1", .N, by = .(nt_seq, Mutation_type)][,.N]
+
+```
+
+# Percentage of undetected variants in each sublibrary (lost_vars df) and gene:
+```{r, warning=F}  
+  # The input_list and output_list were generated at the beginning of this file.
+  lost_vars<-data.frame(library=c("down_blocks_combinations", "up_blocks_combinations", "tetramers", "df_singles", "df_doubles", "trimers", "df_doubles2", "aa_AQP4_final",
+                                  "aa_MAPK10_final", "aa_OPRK1_final", "aa_OPRL1_final", "single_proline", "double_proline", "triple_proline", "only_upstream", "only_downstream"))
+    for (k in 1:length(input_list)){
+      lost_vars[k,2]<-((nrow(output_list[[k]])/3)/nrow(input_list[[k]]))*100 # Divide by 3 because in output_list I have the variatns triplicated (3 replicates)
+    }
+    lost_vars
+    
+  # Detected variants y gene
+    LM_dtbl[, .N, by=Gene]
+```
+
+# The Position_mutated indexes for the "aa_double_triple_mutants" variants are in the reverse order (6 being the -1). Change it, using negative indexes where -1 is the closest to the stop codon:
+```{r warning=FALSE}
+
+  remap_pos <- function(x, n) ifelse(x %in% seq_len(n), x - (n + 1L), x)
+  
+  mt <- "aa_double_triple_mutants"
+  
+  # MAPK10 / AQP4 — positions 1 & 2, max = 6
+    cols <- c("Position_mutated_1", "Position_mutated_2")
+    LM_dtbl[Mutation_type == mt & Gene %chin% c("MAPK10", "AQP4"),
+          (cols) := lapply(.SD, remap_pos, n = 6L), .SDcols = cols]
+  
+  # OPRK1 / OPRL1 — positions 1, 2 & 3, max = 9
+    cols <- c("Position_mutated_1", "Position_mutated_2", "Position_mutated_3")
+    LM_dtbl[Mutation_type == mt & Gene %chin% c("OPRK1", "OPRL1"),
+          (cols) := lapply(.SD, remap_pos, n = 9L), .SDcols = cols]
+```
+
+
+# Fitness distribution and interreplicate correlations:
+```{r, warning=F, fig.height=4, fig.width=12}
+# Set the replicate column as factor, instead of numeric:
+ LM_dtbl$replicate<-as.factor(LM_dtbl$replicate)
+ plot(ggplot(LM_dtbl, aes(x=fitness_rep, color=replicate)) + geom_density() + rep_colors + p) 
+
+ a=100 # Retain variants with >100 reads 
+# Calculate the interreplicate correlations:
+ r1<-LM_dtbl[replicate==1 & reads>a, c("nt_seq", "fitness_rep")][!duplicated(nt_seq)]; setnames(r1, "fitness_rep", "rep1")
+ r2<-LM_dtbl[replicate==2 & reads>a, c("nt_seq", "fitness_rep")][!duplicated(nt_seq)]; setnames(r2, "fitness_rep", "rep2")
+ r3<-LM_dtbl[replicate==3 & reads>a, c("nt_seq", "fitness_rep")][!duplicated(nt_seq)]; setnames(r3, "fitness_rep", "rep3")
+ rep_cors_LM1<-as.data.table(left_join(left_join(r1, r2, by="nt_seq"), r3, by="nt_seq"))
+    
+  p1<-ggplot(rep_cors_LM1, aes(y=rep1, x=rep2)) + geom_point(alpha=.25) + theme(legend.position = "none") + 
+      labs(y="Replicate 1", x="Replicate 2") + stat_cor(aes(label = ..r.label..), size=6, label.y.npc=c(1,1)) + p
+  p2<-ggplot(rep_cors_LM1, aes(y=rep1, x=rep3)) + geom_point(alpha=.25) + theme(legend.position = "none") + 
+      labs(y="Replicate 1", x="Replicate 3") + stat_cor(aes(label = ..r.label..), size=6, label.y.npc=c(1,1)) + p
+  p3<-ggplot(rep_cors_LM1, aes(y=rep2, x=rep3)) + geom_point(alpha=.25) + theme(legend.position = "none") + 
+      labs(y="Replicate 3", x="Replicate 3") + stat_cor(aes(label = ..r.label..), size=6, label.y.npc=c(1,1)) + p
+
+
+p4<-ggarrange(p1, p2, p3, nrow=1)
+p4
+```
+
+```{r, warning = FALSE}  
+pdf(file.path(plot_dir, "Replicate_cors.pdf"), height = 4, width = 12)
+print(p4); dev.off()
+```
+
+
+# Interreplicate correlations of downstream sequence labelled by position!
+```{r, warning=F, fig.height=4, fig.width=12}
+
+  r1<-LM_dtbl[replicate==1 & Mutation_type=="Single_mutants_downstream_allnts" & reads>100, c("fitness_rep", "Position_mutated_1", "Gene")]
+  r2<-LM_dtbl[replicate==2 & Mutation_type=="Single_mutants_downstream_allnts" & reads>100 & 
+                nt_seq%chin%c(LM_dtbl[replicate==1 & Mutation_type=="Single_mutants_downstream_allnts", nt_seq]), c("fitness_rep", "Position_mutated_1", "Gene")]
+  c1<-data.table(rep1=r1$fitness_rep, rep2=r2$fitness_rep, position=r1$Position_mutated_1, Gene=r1$Gene)
+
+
+  p1<-ggplot(c1[Gene=="AQP4"],aes(y=rep1, x=rep2, label=position)) + geom_point() + geom_text(nudge_x = .02) + p + 
+    stat_cor(aes(y=rep1, x=rep2, label = ..r.label..), size=4, label.y.npc=c(1,1)) + 
+    ggtitle("AQP4") + geom_hline(yintercept=LM_dtbl[Gene=="AQP4" & WT=="yes", unique(RT)], color = "red", size = 0.5, linetype="dashed") +
+    geom_vline(xintercept=LM_dtbl[Gene=="AQP4" & WT=="yes", unique(RT)], color = "red", size = 0.5, linetype="dashed") + theme(title = element_text(size=15))
+  
+  p2<-ggplot(c1[Gene=="MAPK10"],aes(y=rep1, x=rep2, label=position)) + geom_point() + geom_text(nudge_x = .02) + p +
+    stat_cor(aes(y=rep1, x=rep2, label = ..r.label..), size=4, label.y.npc=c(1,1)) + 
+    ggtitle("MAPK10") + geom_hline(yintercept=LM_dtbl[Gene=="MAPK10" & WT=="yes", unique(RT)], color = "red", size = 0.5, linetype="dashed") +
+    geom_vline(xintercept=LM_dtbl[Gene=="MAPK10" & WT=="yes", unique(RT)], color = "red", size = 0.5, linetype="dashed") + theme(title = element_text(size=15)) 
+  
+  p3<-ggplot(c1[Gene=="OPRK1"],aes(y=rep1, x=rep2, label=position)) + geom_point() + geom_text(nudge_x = .02) + p + 
+    stat_cor(aes(y=rep1, x=rep2, label = ..r.label..), size=4, label.y.npc=c(1,1)) + 
+    ggtitle("OPRK1") + geom_hline(yintercept=LM_dtbl[Gene=="OPRK1" & WT=="yes", unique(RT)], color = "red", size = 0.5, linetype="dashed") +
+    geom_vline(xintercept=LM_dtbl[Gene=="OPRK1" & WT=="yes", unique(RT)], color = "red", size = 0.5, linetype="dashed") + theme(title = element_text(size=15))
+  
+p4<-ggarrange(p1, p2, p3, nrow=1)
+p4
+
+```
+
+```{r, warning = FALSE}  
+pdf(file.path(plot_dir, "Replicate_cors_byPTCposition.pdf"), height = 4, width = 12)
+print(p4); dev.off()
+```
+
+
+# Readthrough distributions (all variants and per genes)
+```{r, warning=F, fig.height=4, fig.width=5.5}
+
+LM_dtbl[Gene%chin%c("AQP4", "OPRK1", "MAPK10"), summary(RT)]
+LM_dtbl[Gene=="AQP4", summary(RT)]
+LM_dtbl[Gene=="OPRK1", summary(RT)]
+LM_dtbl[Gene=="MAPK10", summary(RT)]
+LM_dtbl[Gene=="OPRL1", summary(RT)]
+
+p4<-ggplot(LM_dtbl[Gene%chin%c("AQP4", "OPRK1", "MAPK10") & reads>100], aes(x=RT, color=Gene)) + geom_density() + gene_colors + p + xlab("Readthrough (%)") + 
+  theme(axis.title.y=element_blank(), axis.text.y=element_blank())
+p4
+
+```
+
+```{r, warning = FALSE}  
+pdf(file.path(plot_dir, "Density_plots.pdf"), height = 4, width = 5.5)
+print(p4); dev.off()
+```
+
+# Plot RT distributions by gene and mutation type:
+```{r, warning=F, fig.height=4, fig.width=10.5} 
+
+# WT hlines:
+  hline_data <- data.frame(category = c("AQP4", "OPRK1", "MAPK10"), intercept = c(LM_dtbl[Gene=="AQP4" & WT=="yes", unique(RT)], 
+                                                                                  LM_dtbl[Gene=="OPRK1" & WT=="yes", unique(RT)], 
+                                                                                  LM_dtbl[Gene=="MAPK10" & WT=="yes", unique(RT)]))
+  hline_data$category<-factor(hline_data$category, levels=c("AQP4", "OPRK1", "MAPK10"))
+
+# By gene:
+  ggplot(LM_dtbl[Gene%in%c("AQP4", "OPRK1","MAPK10") & reads>100], aes(y=RT, x=Gene)) + geom_violin() + ylab("Readthrough (%)") + 
+    geom_segment(data = hline_data, aes(x = as.numeric(category) - 0.4, xend = as.numeric(as.factor(category)) + 0.4, y = intercept, yend = intercept), 
+                 color = "red", size = 1) + p 
+
+# By Mutation Type:
+  dtbl_to_plot<-LM_dtbl[Gene%in%c("AQP4", "OPRK1","MAPK10") & reads>100 &
+                   !Mutation_type%chin%c("aa_doublemutants_proline", "aa_singlemutants_proline", "aa_triplemutants_proline")]
+  
+  dtbl_to_plot[Mutation_type=="3nts_upstream_PTC_randomized", short_mutation_type:="Mutants upstream"]
+  dtbl_to_plot[Mutation_type=="aa_double_triple_mutants", short_mutation_type:="Mutants upstream"]
+  dtbl_to_plot[Mutation_type=="CTAG_randomization", short_mutation_type:="CUAG +1/+4"]
+  dtbl_to_plot[Mutation_type=="double_mutants_downstream_+1/+10nts", short_mutation_type:="Singles&Doubles \n+1/+10"]
+  dtbl_to_plot[Mutation_type=="double_mutants_11-15nts_downstream", short_mutation_type:="Singles&Doubles \n+11/+15"]
+  dtbl_to_plot[Mutation_type=="Single_mutants_downstream_allnts" & Position_mutated_1<11, short_mutation_type:="Singles&Doubles \n+1/+10"]
+  dtbl_to_plot[Mutation_type=="Single_mutants_downstream_allnts" & Position_mutated_1>10, short_mutation_type:="Singles&Doubles \n+11/+15"]
+  dtbl_to_plot[Mutation_type=="downstream_swappings", short_mutation_type:="Swaps"]
+  dtbl_to_plot[Mutation_type=="upstream_swappings", short_mutation_type:="Swaps"]
+  
+  dtbl_to_plot$short_mutation_type<-factor(dtbl_to_plot$short_mutation_type, 
+                                    levels=c("Mutants upstream", "CUAG +1/+4", "Singles&Doubles \n+1/+10", "Singles&Doubles \n+11/+15"))
+
+# I'm not plotting the CUAG variants in the "Singles&Doubles \n+1/+10"! 
+  p5<-ggplot(dtbl_to_plot[!(short_mutation_type=="Singles&Doubles \n+1/+10" & Position_mutated_1<5 & is.na(Position_mutated_2))], aes(y=RT, x=Gene)) + geom_violin() +
+    facet_wrap(~short_mutation_type, ncol=6) + ylab("Readthrough (%)") + 
+    geom_segment(data = hline_data, aes(x = as.numeric(category) - 0.4, xend = as.numeric(as.factor(category)) + 0.4, y = intercept, yend = intercept), 
+                 color = "red", size = 0.5, linetype = "dashed") + p + theme(axis.text.x=element_text(angle=90, hjust=1, size=12), strip.text.x = element_text(size = 12))
+  
+  p5
+```
+
+# Same for chimeras:
+```{r, warning=F, fig.height=3, fig.width=3} 
+  p6<-ggplot(LM_dtbl[Gene=="Chimera"], aes(y=RT, x=Gene)) + geom_violin() + ylab("Readthrough (%)") + p + 
+    theme(axis.text.x=element_text(size=16), strip.text.x = element_text(size = 12), axis.title.x=element_blank()) + 
+    geom_hline(yintercept = hline_data[1,2], color = "red", size = 0.5, linetype = "dashed") +
+    geom_hline(yintercept = hline_data[2,2], color = "red", size = 0.5, linetype = "dashed") +
+    geom_hline(yintercept = hline_data[3,2], color = "red", size = 0.5, linetype = "dashed") + ylim(0,8)
+  p6
+```
+
+```{r, warning = FALSE}  
+pdf(file.path(plot_dir, "RT_distributions.pdf"), height = 4, width = 8.35)
+print(p5); dev.off()
+```
+
+```{r, warning = FALSE}  
+pdf(file.path(plot_dir, "RT_distributions_chimera.pdf"), height = 4, width = 4)
+print(p6); dev.off()
+```
+
+# ------------------ Phylogenetic conservation scores
+
+All coordenates are from hg38
+Download conservation scores were downloaded from UCSC on January 2025 as follows:
+ a) Access UCSC portal, go to Tools and select Table browser: https://genome.ucsc.edu/cgi-bin/hgTables
+ b) Set Group = 'Comparative Genomics', Track = 'UCSC 100 Vertebrates', Table = 'Cons 100 Verts (phyloP100way)' (or phastCons if preferred), Position = genomic coordenates of the region we want to download (ie. chr20:64080082-64100633), Output Filename = "XXX.txt" and download.
+ 
+# Downloaded files were processed into the phyloP_dtbl.rds & phastCons_dtbl.rds dtbls (both in the FigShare repository)
+
+ 
+```{r, warning=F, fig.width=6, fig.height=6}
+
+# Load objects:
+  phyloP_dtbl<-readRDS(file.path(figshare_dir, "phyloP_dtbl.rds"))
+  phastCons_dtbl<-readRDS(file.path(figshare_dir, "phastCons_dtbl.rds"))
+  
+# Plot:
+plot_settings<-list(theme(axis.text.y = element_blank(),
+              axis.text.x = element_text(vjust = 0.5, hjust = 0.5, angle = 0, size=20),
+              axis.title.y = element_text(size=20), axis.title.x = element_text(size=20), axis.ticks = element_blank(),
+              legend.title = element_blank(), legend.position = "top"), labs(title=""), p)
+
+
+  pl1<-ggplot(phyloP_dtbl[!is.na(type)], aes(x = PhyloP, y = 1)) +
+        geom_density_ridges(aes(color=type, scale = 2, fill=type)) +
+        transcript_features_fills + transcript_features_colors + ylab("Density") + xlab("PhyloP") +
+        plot_settings + facet_wrap(~Gene) 
+  
+  pl2<-ggplot(phastCons_dtbl[!is.na(type)], aes(x = PhyloP, y = 1)) +
+        geom_density_ridges(aes(color=type, scale = 2, fill=type)) +
+        transcript_features_fills + transcript_features_colors + ylab("Density") + xlab("PhastCons") +
+        plot_settings + facet_wrap(~Gene, scales="free") 
+    
+    
+  pl1; pl2
+    
+```
+
+
+```{r, warning=F}
+pdf(file.path(plot_dir, "phyloP.pdf"), height = 6, width = 6)
+print(pl1); dev.off()
+```
+
+```{r, warning=F}
+pdf(file.path(plot_dir, "phastCons.pdf"), height = 6, width = 6)
+print(pl2); dev.off()
+```

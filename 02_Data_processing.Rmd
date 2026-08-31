@@ -1,0 +1,426 @@
+---
+title: "Data_processing"
+output: html_document
+date: "2026-08-28"
+---
+
+
+
+# --------------- Process sort-seq data
+
+# Load DimSum output table
+```{r}
+# Download the Dimsum output table from FigShare and load into a datatable named LM:
+  load(file.path(figshare_dir, "dimsum_local_maxima_2024_variant_data_merge.RData"))  
+  LM<-as.data.table(variant_data_merge)
+  LM$nt_seq<-toupper(LM$nt_seq)
+  LM<-LM[, !c("WT", "STOP", "STOP_readthrough", "barcode_valid", "constant_region", "permitted", "too_many_substitutions", "mixed_substitutions")] ## Get rid of useless columns
+  
+# Set new column names, to ease the analysis downstream.  
+  newnames<-c() 
+  for(k in 1:length(colnames(LM))){
+    newnames<-c(newnames, unlist(strsplit(colnames(LM)[k], "_e1"))[1])}
+  colnames(LM)<-newnames
+  
+# Create 18 subdatatables, each with the data of one replicate and one drug:
+  LM_r1<-LM[, .SD, .SDcols = names(LM) %like% "r1|nt_seq|aa_seq|WT"]
+  newnames<-c() ;for(k in 1:length(colnames(LM_r1))){
+  newnames<-c(newnames, unlist(strsplit(colnames(LM_r1)[k], "0"))[2])}; colnames(LM_r1)<-newnames
+  
+  LM_r2<-LM[, .SD, .SDcols = names(LM) %like% "r2|nt_seq|aa_seq|WT"]
+  newnames<-c() ;for(k in 1:length(colnames(LM_r2))){
+  newnames<-c(newnames, unlist(strsplit(colnames(LM_r2)[k], "0"))[2])}; colnames(LM_r2)<-newnames
+  
+  LM_r3<-LM[, .SD, .SDcols = names(LM) %like% "r3|nt_seq|aa_seq|WT"]
+  newnames<-c() ;for(k in 1:length(colnames(LM_r3))){
+  newnames<-c(newnames, unlist(strsplit(colnames(LM_r3)[k], "0"))[2])}; colnames(LM_r3)<-newnames
+  
+# Create the columns 'reads_allbins' (read count for each variant across bins), 'treatment' and 'replicate':
+  LM_r1[, reads_allbins:=sum(c(r1p4,r1p5,r1p6,r1p7,r1p8,r1p9,r1p10)), by=1:nrow(LM_r1)][, replicate:=1]
+  LM_r2[, reads_allbins:=sum(c(r2p4,r2p5,r2p6,r2p7,r2p8,r2p9,r2p10)), by=1:nrow(LM_r2)][, replicate:=2]
+  LM_r3[, reads_allbins:=sum(c(r3p4,r3p5,r3p6,r3p7,r3p8,r3p9,r3p10)), by=1:nrow(LM_r3)][, replicate:=3]
+
+```
+
+#  Calculate the normalised readthrough values by:
+a) Divide the number of reads of each variant by the total number of reads of that bin.
+b) Normalise by the percentage of that bin in the total population (data in the Influx PDFs)
+c) Finally, multiply by the mean mCherry value of each bin (stored in the 'gates_boundaries_LM' file.)
+```{r}
+# The mean mCherry values of each gate for each drug are stored in 'gates_boundaries' dtbl Load it: 
+  
+gates_boundaries_LM <- data.table(
+  Replicate = rep(1:3, each = 8),
+  Gate      = rep(paste0("P", 4:11), times = 3),
+  Mean_value = c(
+      3.57,  9.79, 18.99, 35.52, 70.47, 152.03, 314.84, 2878.00,  # Replicate 1
+      3.69,  9.77, 19.03, 35.41, 70.42, 152.76, 319.76, 2828.43,  # Replicate 2
+      3.65,  9.79, 19.04, 35.64, 70.66, 151.42, 315.33, 2974.01   # Replicate 3
+  )
+)
+
+  r1_bins<-gates_boundaries_LM[Replicate==1, round(((Mean_value)/2878)*100,2)]
+  r2_bins<-gates_boundaries_LM[Replicate==2, round(((Mean_value)/2828)*100,2)]
+  r3_bins<-gates_boundaries_LM[Replicate==3, round(((Mean_value)/2974)*100,2)]
+  
+LM_r1[, c("r1p4_norm", "r1p5_norm", "r1p6_norm", "r1p7_norm", "r1p8_norm", "r1p9_norm", "r1p10_norm", "r1p11_norm"):=.((r1p4/(sum(r1p4)))*0.2791, (r1p5/(sum(r1p5)))*0.1249, (r1p6/(sum(r1p6)))*0.1613, (r1p7/(sum(r1p7)))*0.1498, (r1p8/(sum(r1p8)))*0.0809, (r1p9/(sum(r1p9)))*0.0364, (r1p10/(sum(r1p10)))*0.0112, (r1p11/(sum(r1p11)))*0.0125)][, sum_normreads:=sum(c(r1p4_norm, r1p5_norm, r1p6_norm, r1p7_norm, r1p8_norm, r1p9_norm, r1p10_norm)), by=1:nrow(LM_r1)][, fitness_rep:=((r1p4_norm*r1_bins[1] + r1p5_norm*r1_bins[2] + r1p6_norm*r1_bins[3] + r1p7_norm*r1_bins[4] + r1p8_norm*r1_bins[5] + r1p9_norm*r1_bins[6] + r1p10_norm*r1_bins[7])/sum_normreads), by=1:nrow(LM_r1)]
+
+LM_r2[, c("r2p4_norm", "r2p5_norm", "r2p6_norm", "r2p7_norm", "r2p8_norm", "r2p9_norm", "r2p10_norm", "r2p11_norm"):=.((r2p4/(sum(r2p4)))*0.2791, (r2p5/(sum(r2p5)))*0.1249, (r2p6/(sum(r2p6)))*0.1613, (r2p7/(sum(r2p7)))*0.1498, (r2p8/(sum(r2p8)))*0.0809, (r2p9/(sum(r2p9)))*0.0364, (r2p10/(sum(r2p10)))*0.0112, (r2p11/(sum(r2p11)))*0.0125)][, sum_normreads:=sum(c(r2p4_norm, r2p5_norm, r2p6_norm, r2p7_norm, r2p8_norm, r2p9_norm, r2p10_norm)), by=1:nrow(LM_r2)][, fitness_rep:=((r2p4_norm*r2_bins[1] + r2p5_norm*r2_bins[2] + r2p6_norm*r2_bins[3] + r2p7_norm*r2_bins[4] + r2p8_norm*r2_bins[5] + r2p9_norm*r2_bins[6] + r2p10_norm*r2_bins[7])/sum_normreads), by=1:nrow(LM_r2)]
+
+LM_r3[, c("r3p4_norm", "r3p5_norm", "r3p6_norm", "r3p7_norm", "r3p8_norm", "r3p9_norm", "r3p10_norm", "r3p11_norm"):=.((r3p4/(sum(r3p4)))*0.2791, (r3p5/(sum(r3p5)))*0.1249, (r3p6/(sum(r3p6)))*0.1613, (r3p7/(sum(r3p7)))*0.1498, (r3p8/(sum(r3p8)))*0.0809, (r3p9/(sum(r3p9)))*0.0364, (r3p10/(sum(r3p10)))*0.0112, (r3p11/(sum(r3p11)))*0.0125)][, sum_normreads:=sum(c(r3p4_norm, r3p5_norm, r3p6_norm, r3p7_norm, r3p8_norm, r3p9_norm, r3p10_norm)), by=1:nrow(LM_r3)][, fitness_rep:=((r3p4_norm*r3_bins[1] + r3p5_norm*r3_bins[2] + r3p6_norm*r3_bins[3] + r3p7_norm*r3_bins[4] + r3p8_norm*r3_bins[5] + r3p9_norm*r3_bins[6] + r3p10_norm*r3_bins[7])/sum_normreads), by=1:nrow(LM_r3)]
+
+```
+
+# Merge the 3 replicate dtbls into one, named 'LM_dtbl'.
+```{r}
+# Remove the 'r1' or 'r2' of the column names, to be able to merge all the datatables in one:
+  cnames<-c("nt_seq", "aa_seq", "p4", "p5", "p6", "p7", "p8", "p9", "p10", "p11", "reads_allbins", "replicate", "p4_norm", "p5_norm", "p6_norm", "p7_norm", "p8_norm", "p9_norm",  "p10_norm",  "p11_norm", "sum_normreads", "fitness_rep")
+
+  colnames(LM_r1)<-cnames; colnames(LM_r2)<-cnames; colnames(LM_r3)<-cnames
+  
+# Merge the two replicates of each treatment in one datatable:
+  LM_dtbl<-rbind(LM_r1, LM_r2, LM_r3)
+  
+# Set fitness_rep to NA for low coverage (<10) variants, so they are not used for RT calculation:    
+  
+  LM_dtbl[replicate==1 & reads_allbins<10, .N] # n=47
+  LM_dtbl[replicate==2 & reads_allbins<10, .N] # n=51
+  LM_dtbl[replicate==3 & reads_allbins<10, .N] # n=49
+  LM_dtbl[reads_allbins<10, fitness_rep:=NA]
+  
+# Set the replicate column as factor, instead of numeric:
+  LM_dtbl$replicate<-as.factor(LM_dtbl$replicate)
+
+  
+# Calculate the mean readthrough efficiency and the sdeviation ('RT' and 'sd_RT' columns).
+  LM_dtbl[, c("RT", "sd_RT"):=.(mean(fitness_rep, na.rm=T), sd(fitness_rep, na.rm=T)), by=nt_seq]
+
+  
+# Create the 'reads_allbins_r1', 'reads_allbins_r2' and 'reads_allbins_median' columns: 
+  for (i in c(2,3)){
+  LM_dtbl[replicate==1, reads_allbins_r1:=reads_allbins, by="nt_seq"]
+  LM_dtbl[replicate==i, reads_allbins_r1:=LM_dtbl[nt_seq==nt_seq & replicate==1, reads_allbins]]
+  }
+  
+  for (i in c(1,3)){
+  LM_dtbl[replicate==2, reads_allbins_r2:=reads_allbins, by="nt_seq"]
+  LM_dtbl[replicate==i, reads_allbins_r2:=LM_dtbl[nt_seq==nt_seq & replicate==2, reads_allbins]]
+  }
+
+  for (i in c(1,2)){
+  LM_dtbl[replicate==3, reads_allbins_r3:=reads_allbins, by="nt_seq"]
+  LM_dtbl[replicate==i, reads_allbins_r3:=LM_dtbl[nt_seq==nt_seq & replicate==3, reads_allbins]]
+  }
+
+# the column 'reads' shows the median of reads_allbins across replicates:
+  LM_dtbl[, reads:=round(matrixStats::rowMedians(as.matrix(.SD), na.rm=T), 0), .SDcols=c("reads_allbins_r1", "reads_allbins_r2", "reads_allbins_r3")]
+  
+```
+
+# Create the RT_binomial column (needed for model fitting later on):
+```{r, warning=F}
+  LM_dtbl[, RT_binomial:=RT/100, by=.I]
+```
+
+
+# Check the distribution of the non-stop TP53 control variant across bins. Ideally, it should be exclusively found in P11:
+```{r, warning=F, fig.width=4.5, fig.height=5}
+
+# Calculate the percentage of P11 reads taken up by the control variant:
+  (LM_dtbl[nt_seq==NONSTOP_CTRL_SEQ & 
+               replicate==1, p11]/LM_dtbl[replicate==1, sum(p11)])*100 # -> 32%
+  
+  
+  nonstop_ctrl<-LM_dtbl[nt_seq==NONSTOP_CTRL_SEQ &
+                    replicate==1, c("nt_seq","p4","p5","p6","p7","p8", "p9","p10", "p11","p4_norm",
+                                    "p5_norm","p6_norm","p7_norm","p8_norm", "p9_norm", "p10_norm", "p11_norm", "replicate")]
+  nonstop_ctrl_long <- as.data.table(gather(nonstop_ctrl, bin, norm_reads, p4:p11_norm, factor_key=TRUE))
+    
+    p1<-ggplot(nonstop_ctrl_long[bin%chin%c("p4","p5","p6","p7","p8", "p9", "p10", "p11")], aes(x=bin, y=norm_reads)) + 
+      geom_bar(stat="identity", fill="#FF6666") + p + 
+      ylab("Read counts (non-stop variant)") + theme(axis.title.x = element_blank())
+    
+    p2<-ggplot(nonstop_ctrl_long[bin%chin%c("p4_norm","p5_norm","p6_norm","p7_norm","p8_norm","p10_norm", "p11_norm")], 
+               aes(x=bin, y=norm_reads)) + geom_bar(stat="identity", fill="#FF6666") + p
+    
+  p2; p1
+```
+
+
+```{r, warning=F}
+pdf(file.path(plot_dir, "Control_variant.pdf"), height = 5, width = 5)
+print(p1); dev.off()
+```
+
+
+
+# Remove the nonstop_ctrl variant + 'p11' and 'p11_norm' columns from LM_dtbl, to avoid confusions in downstream analyses:
+- 'p11' and 'p11_norm' columns are not used to compute RT for other variants, so pointless to keep them
+- we just wanted to make sure it was mostly found in P11. Now, we don't need it anymore.
+
+```{r, warning=F}
+  LM_dtbl<-LM_dtbl[nt_seq!=NONSTOP_CTRL_SEQ]
+  LM_dtbl[, p11:=NULL]
+  LM_dtbl[, p11_norm:=NULL]
+```
+
+# Remove a variant suspucious of cryptic splicing:
+```{r, warning=F}
+  LM_dtbl<-LM_dtbl[nt_seq!=CRYPTIC_SPLICING_SEQ]
+```
+
+# Show the distribution of normalised readcounts across bins for some randomly sampled variants (n=10): 
+```{r, warning=F, fig.height=3, fig.width=12}
+
+  LMsubset<-LM_dtbl[replicate==1, c("p4_norm", "p5_norm", "p6_norm", "p7_norm", "p8_norm", "p9_norm", "p10_norm")]
+  setnames(LMsubset, c("p4_norm", "p5_norm", "p6_norm", "p7_norm", "p8_norm", "p9_norm", "p10_norm"), c("p4", "p5", "p6", "p7", "p8", "p9", "p10"))
+  sampled<-sample(c(1:5208), 10)
+  level_order <- c("p4", "p5", "p6", "p7", "p8", "p9", "p10") ## This is just to sort the x axis of GGplot.
+  
+  j<-1; plot_list = list()
+  for (k in sampled){
+    x<-data.frame(x1=colnames(LMsubset), normalised_counts=as.numeric(LMsubset[k,]))
+    r<-ggplot(x, aes(x=factor(x1, level=level_order), y=normalised_counts)) + geom_bar(stat="identity", fill="blue3") + xlab("Sorting bins")
+    plot_list[[j]]=r
+    j<-j+1
+  }
+  
+  p2<-ggarrange(plot_list[[1]],plot_list[[2]],plot_list[[3]],plot_list[[4]],plot_list[[9]],
+            plot_list[[5]],plot_list[[6]],plot_list[[7]],plot_list[[8]],plot_list[[10]],nrow=2,ncol=5)
+  p2
+  
+```
+
+```{r, warning=F}
+pdf(file.path(plot_dir, "Bins_distribution_ten_variants.pdf"), height = 3, width = 12)
+print(p2); dev.off()
+```
+# Associate each variant DimSum info to the mutagenesis info (by merging LM_dtbl with each of the 14 dataframes containing a different sublibrary/mutagenesis_strategy):
+```{r, warning=F}
+
+# Read the 14 dtbls:
+  down_blocks_combinations<-readRDS(file = file.path(figshare_dir, "down_blocks_combinations.rds"))
+  up_blocks_combinations<-readRDS(file = file.path(figshare_dir, "up_blocks_combinations.rds"))
+  tetramers<-readRDS(file = file.path(figshare_dir, "tetramers.rds"))
+  df_singles<-readRDS(file = file.path(figshare_dir, "df_singles.rds"))
+  df_doubles<-readRDS(file = file.path(figshare_dir, "df_doubles.rds"))
+  trimers<-readRDS(file = file.path(figshare_dir, "trimers.rds"))
+  df_doubles2<-readRDS(file = file.path(figshare_dir, "df_doubles2.rds"))
+  aa_AQP4_final<-readRDS(file = file.path(figshare_dir, "aa_AQP4_final.rds"))
+  aa_MAPK10_final<-readRDS(file = file.path(figshare_dir, "aa_MAPK10_final.rds"))
+  aa_OPRK1_final<-readRDS(file = file.path(figshare_dir, "aa_OPRK1_final.rds"))
+  aa_OPRL1_final<-readRDS(file = file.path(figshare_dir, "aa_OPRL1_final.rds"))
+  single_proline<-readRDS(file = file.path(figshare_dir, "single_proline.rds"))
+  double_proline<-readRDS(file = file.path(figshare_dir, "double_proline.rds"))
+  triple_proline<-readRDS(file = file.path(figshare_dir, "triple_proline.rds"))
+  only_upstream<-readRDS(file = file.path(figshare_dir, "only_upstream.rds"))
+  only_downstream<-readRDS(file = file.path(figshare_dir, "only_downstream.rds"))
+  
+# Store this 14 dataframes in input_list
+  input_list<-list(down_blocks_combinations, up_blocks_combinations, tetramers, df_singles, df_doubles, trimers, df_doubles2, aa_AQP4_final, 
+                   aa_MAPK10_final, aa_OPRK1_final, aa_OPRL1_final, single_proline, double_proline, triple_proline, only_upstream, only_downstream)
+# Merge each of the 14df with LM_dtbl and store them separately in output_list.
+    output_list<-list()
+    for (k in 1:length(input_list)){
+    r<-inner_join(input_list[[k]], LM_dtbl, by="nt_seq")
+    output_list[[k]]=as.data.table(r)}
+    
+# Merge the 14 dataframes from output_list together to generate LM_dt, which contains info of all variants across all mutagenesis types: some sequences are duplicated, because they belong to two or more sublibraries and they are represetned with one row for each mutagenesis type.That's why the nrow of LM_dt is 5231 whereas the number of unique variants is 5071.
+    LM_dtbl<-output_list[[1]]
+    for  (i in 2:length(output_list)){
+    LM_dtbl<-full_join(LM_dtbl, output_list[[i]], by=NULL)}    
+    
+  # There is a misannotation where some variants classified as "double_mutants_11-15nts_downstream" are instead single mutants. Get rid of these using hamming distance:
+    LM_dtbl[Gene=="AQP4" & Mutation_type=="double_mutants_11-15nts_downstream", 
+            isTRUEdoubmut:=as.vector(stringdist::stringdist(nt_seq, "AGAGTATTGTCTTCAGTATGACTAGAAGATCGCACT", method="hamming"))>1] # AQP4
+    LM_dtbl[Gene=="OPRK1" & Mutation_type=="double_mutants_11-15nts_downstream", 
+            isTRUEdoubmut:=as.vector(stringdist::stringdist(nt_seq, "GACATCGATGGGATGAATAAACCAGTATGACTAGTCGTGGAGATG", method="hamming"))>1] # OPRK1
+    LM_dtbl[Gene=="MAPK10" & Mutation_type=="double_mutants_11-15nts_downstream", 
+            isTRUEdoubmut:=as.vector(stringdist::stringdist(nt_seq, "CCCCTGGGTTGTTGCAGGTGACTAGCCGCCTGCCTGCGAAACCCAGCG", method="hamming"))>1] # MAPK10
+    LM_dtbl[Gene=="OPRL1" & Mutation_type=="double_mutants_11-15nts_downstream", 
+            isTRUEdoubmut:=as.vector(stringdist::stringdist(nt_seq, "ACGGTACCGCGGCCCGCATGACTAGGCGTGGACCTG", method="hamming"))>1] # OPRL1
+
+    LM_dtbl<-LM_dtbl[isTRUEdoubmut==T | is.na(isTRUEdoubmut), ]
+```
+
+# --- Do some arrangements. Basically change a few column names and duplicate variants which belong to more than one mutagenesis category:
+
+#Single nt variants have their mutagenesis data in columns "Position_mutated" and "Mutation". With this script, I move the informatio to "Position_mutated_1" and "Mutation_1" columns, where the double_nt variants have their informatioon (is more practical for downstream analysis).
+But don't elimiante "Position_mutated" and "Mutation" because they still have mutagenesis information in other variants.
+```{r, warning=F}
+    LM_dtbl<-LM_dtbl[Mutation_type=="Single_mutants_downstream_allnts", c("Position_mutated_1", "Mutation_1") :=.(Position_mutated, Mutation)]
+    LM_dtbl<-LM_dtbl[Mutation_type=="Single_mutants_downstream_allnts", c("Position_mutated", "Mutation") :=.(NA, NA)]
+```
+
+# Label all the aa_doublemutants variants as such ('remove the gene name'):
+```{r, warning=F}   
+LM_dtbl[Mutation_type%chin%c("aa_doublemutants_AQP4", "aa_doublemutants_MAPK10", "aa_triplemutants_OPRK1", "aa_triplemutants_OPRL1"),
+        Mutation_type:="aa_double_triple_mutants"]
+```
+
+# Create duplicated entries for the 'CTAG_randomized variants' that belong also to the 'double_mutants_downstream_+1/+10nts' group. Right now they are only labelled as 'CTAG_randomized variants' and when we select the 'double_mutants_downstream_+1/+10nts' they are missing.
+```{r, warning=F}   
+  test<-LM_dtbl[Mutation_type=="CTAG_randomization"]
+# Select those with Hamming Distance of 2, which are those belonging to the 'double_mutants_downstream_+1/+10nts' group:
+  test[, double_mut_TRUE:= as.vector(stringdist::stringdist(Mutation, "CTAG", method="hamming"))==2, by=1:nrow(test)]
+  test<-test[double_mut_TRUE==T]
+  test[, WT_seq:="CTAG"]
+  list<-mapply(function(x, y) which(x != y), strsplit(test$Mutation, ""), strsplit(test$WT_seq, ""))
+    
+  for (i in 1:nrow(test)){
+    test$Position_mutated_1[i]<-list[1,i]
+    test$Position_mutated_2[i]<-list[2,i]
+    test$Mutation_1[i]<-s2c(test$Mutation[i])[test$Position_mutated_1[i]]
+    test$Mutation_2[i]<-s2c(test$Mutation[i])[test$Position_mutated_2[i]]
+    }
+  test[, Mutation_type:="double_mutants_downstream_+1/+10nts"]
+  test[, WT_seq:=NULL]; test[, double_mut_TRUE:=NULL]
+  LM_dtbl<-rbind(LM_dtbl, test)
+```
+
+
+# Same but for the single mutants:
+```{r, warning=F}   
+  test<-LM_dtbl[Mutation_type=="CTAG_randomization"]
+# Select those with Hamming Distance of 1, which are those belonging to the 'Single_mutants_downstream_allnts' group:
+  test[, single_mut_TRUE:= as.vector(stringdist::stringdist(Mutation, "CTAG", method="hamming"))==1, by=1:nrow(test)]
+  test<-test[single_mut_TRUE==T]; test[, WT_seq:="CTAG"]
+  list<-mapply(function(x, y) which(x != y), strsplit(test$Mutation, ""), strsplit(test$WT_seq, ""))
+    
+  for (i in 1:nrow(test)){
+    test$Position_mutated_1[i]<-list[i]
+    test$Mutation_1[i]<-s2c(test$Mutation[i])[test$Position_mutated_1[i]]
+    }
+  test[, Mutation_type:="Single_mutants_downstream_allnts"]
+  test[, WT_seq:=NULL]; test[, single_mut_TRUE:=NULL]
+  LM_dtbl<-rbind(LM_dtbl, test)
+```
+
+# Label the chimera variants as such. They are now unlabelled (Gene=NA)
+```{r, warning=F} 
+  LM_dtbl[is.na(Gene), Gene:="Chimera"]
+```
+
+# After these rearengements, make sure we don't have unwanted duplications. We want a unique combination of 'nt_seq - Mutation_type - replicate' columns.
+```{r, warning=F} 
+  
+  LM_dtbl[, .N] # 16548 rows
+
+  # Print duplicated variants for that triple column combination:
+    LM_dtbl[, .N, by = .(nt_seq, Mutation_type, replicate)][N>1]
+  
+  # Keep only one row per each combination:
+    LM_dtbl <- unique(LM_dtbl, by = c("nt_seq", "Mutation_type", "replicate"))
+    LM_dtbl[, .N] # 16425 rows
+``` 
+
+# Create the 'downstream_seq' column, which shows the sequence downstream of the stop codon. The column is set to NA for chimera and upstream variants:
+```{r, warning=F, fig.height=5, fig.width=10}  
+  
+  # Gene-specific split patterns, which are the upstream_seq + stop codon:
+  split_patterns <- c(
+    AQP4   = "AGAGTATTGTCTTCAGTATGA",
+    OPRK1  = "GACATCGATGGGATGAATAAACCAGTATGA",
+    MAPK10 = "CCCCTGGGTTGTTGCAGGTGA",
+    OPRL1  = "ACGGTACCGCGGCCCGCATGA"
+  )
+
+  LM_dtbl[ ,
+    downstream_seq := mapply(
+      function(seq, pat) strsplit(seq, pat, fixed = TRUE)[[1]][2],
+      nt_seq,
+      split_patterns[Gene]
+    )
+  ]
+```
+
+ 
+# Create the 'PTC' column -> Some mutations introduce a PTC, which are used as negative controls. The 'PTC' columns shows if the variant has a PTC ('yes') or not ('no'). 
+
+```{r, warning=F, fig.height=5, fig.width=10} 
+
+# The second PTC is found downstream:
+  for (k in 1:nrow(LM_dtbl)){ 
+    if (is.na(LM_dtbl$downstream_seq[k])){LM_dtbl$PTC[k]<-"no"} 
+    else if (sum((substring(LM_dtbl$downstream_seq[k], seq(1, nchar(LM_dtbl$downstream_seq[k]), 3), 
+                            pmin(seq(1, nchar(LM_dtbl$downstream_seq[k]), 3) + 3 - 1, 
+                                 nchar(LM_dtbl$downstream_seq[k]))))%chin%c("TGA", "TAG", "TAA"), na.rm = TRUE)==0)
+         {LM_dtbl$PTC[k]<-"no"} 
+    else {LM_dtbl$PTC[k]<-"yes"}
+  }
+
+# The second PTC is found upstream:
+  LM_dtbl[Mutation_type=="3nts_upstream_PTC_randomized" & Mutation%chin%c("TGA", "TAG", "TAA"), PTC:="yes"]
+```
+
+Plot:
+```{r, warning=F, fig.height=4, fig.width=8} 
+  p1<-ggplot(LM_dtbl[!duplicated(nt_seq) & Gene%chin%c("AQP4", "OPRK1", "MAPK10")], aes(x=PTC, y=RT)) + geom_boxplot(outliers = F) + 
+    geom_jitter(alpha=.2) + facet_wrap(~Gene, scales="free") + p + ylab("Readthrough (%)") + xlab(">1 PTC")
+  LM_dtbl[!duplicated(nt_seq), table(PTC)]
+  
+  p1
+```
+
+```{r, warning = FALSE}  
+pdf(file.path(plot_dir, "PTC2x_controls.pdf"), height = 4, width = 8)
+print(p1); dev.off()
+```
+
+# Create the WT column and factorize the gene column:
+```{r, warning=F, fig.height=5, fig.width=10}
+
+# Factorize gene column:
+  LM_dtbl$Gene<-factor(LM_dtbl$Gene, levels=c("AQP4", "OPRK1", "MAPK10", "OPRL1", "Chimera"))
+
+# WT column:
+  LM_dtbl[, WT:="no"]
+  LM_dtbl[nt_seq=="AGAGTATTGTCTTCAGTATGACTAGAAGATCGCACT", WT:="yes"] # AQP4
+  LM_dtbl[nt_seq=="CCCCTGGGTTGTTGCAGGTGACTAGCCGCCTGCCTGCGAAACCCAGCG", WT:="yes"] # MAPK10
+  LM_dtbl[nt_seq=="GACATCGATGGGATGAATAAACCAGTATGACTAGTCGTGGAGATG", WT:="yes"] # OPRK1
+  LM_dtbl[nt_seq=="ACGGTACCGCGGCCCGCATGACTAGGCGTGGACCTG", WT:="yes"] # OPRL1
+
+```
+
+# Generate three new columns: 
+- The RT_WTnorm column, where the RT of the WT is subtracted from each variant, by gene.
+- pval_diff_from_WT, where we test the significance of the RT_WTnorm score
+- The FDR_diff_from_WT. FDR correction of multitesting.
+```{r, warning=F}
+
+# RT_WTnorm column
+  AQP4_wt_RT<-LM_dtbl[Gene=="AQP4" & WT=="yes", unique(RT)] 
+  OPRK1_wt_RT<-LM_dtbl[Gene=="OPRK1" & WT=="yes", unique(RT)]
+  MAPK10_wt_RT<-LM_dtbl[Gene=="MAPK10" & WT=="yes", unique(RT)]
+  # Can't do it with OPRL1 bc we don't have the WT
+  
+  LM_dtbl[Gene=="AQP4", RT_WTnorm:=RT-AQP4_wt_RT]
+  LM_dtbl[Gene=="OPRK1", RT_WTnorm:=RT-OPRK1_wt_RT]
+  LM_dtbl[Gene=="MAPK10", RT_WTnorm:=RT-MAPK10_wt_RT]
+  
+# FDR_diff_from_WT column: does the variant have a RT significantly different from WT?
+  
+  # Get the RT values across replicates for the WTs and store in genes_WT:
+    AQP4_wt<-LM_dtbl[Gene=="AQP4" & WT=="yes", unique(fitness_rep)] 
+    OPRK1_wt<-LM_dtbl[Gene=="OPRK1" & WT=="yes", unique(fitness_rep)]
+    MAPK10_wt<-LM_dtbl[Gene=="MAPK10" & WT=="yes", unique(fitness_rep)] 
+    genes_WT<-rbind(AQP4_wt, OPRK1_wt, MAPK10_wt)
+  
+  # T.test variant vs WT across the 3 replicates, store in 'pval_diff_from_WT':
+  genes<-c("AQP4", "OPRK1", "MAPK10")
+  for (i in 1:length(genes)){
+    LM_dtbl[Gene==genes[i], pval_diff_from_WT := {
+      x <- fitness_rep[!is.na(fitness_rep)]
+      if (length(x) < 2) NA_real_ else t.test(x, genes_WT[i,])$p.value
+    }, by = nt_seq]
+  }
+
+# Adjust pvalue using BH/FDR:
+  LM_dtbl[, FDR_diff_from_WT := p.adjust(pval_diff_from_WT, method = "BH")]
+
+# How many genes have a significantly higher RT over WT, keeping the FDR at 0.05?
+  LM_dtbl[!duplicated(nt_seq) & RT_WTnorm>0 & FDR_diff_from_WT<0.05, .N, by=Gene]
+```
+
+
+

@@ -1,0 +1,442 @@
+---
+title: "Fig3"
+output: html_document
+date: "2026-08-28"
+---
+
+# ------------ Predictive models using single + double mutants downstream:
+
+```{r, warning=F, fig.height=5, fig.width=10}
+# Needed objects:
+  genes<-c("AQP4", "OPRK1", "MAPK10")
+  predictions_allgenes<-list(); coeffs_allgenes<-list(); residuals_allgenes<-list()
+  
+  for (j in 1:length(genes)){
+  # Objects to be regenerated in each j loop:
+    predictions_tenfolds<-data.frame()
+    coeffs_tenfolds<-data.table()
+    residuals_tenfolds<-data.table()
+    
+  # Select the variants to train the model on and do the one-hot encoding:
+    subset<-LM_dtbl[Gene==genes[j] & reads>100 & PTC=="no" &
+                      Mutation_type %chin% c("Single_mutants_downstream_allnts",
+                                       "double_mutants_downstream_+1/+10nts",
+                                       "double_mutants_11-15nts_downstream")]
+    # Remove all variants with AQP4_4T, OPRK1_10T and MAPK10_12A mutations, which create stop codons in the WT. Fitting these variants would introduce noise.
+    subset<-subset[!(Gene=="AQP4" & !is.na(Position_mutated_1) & Position_mutated_1==4 & !is.na(Mutation_1) & Mutation_1=="T")]
+    subset<-subset[!(Gene=="AQP4" & !is.na(Position_mutated_2) & Position_mutated_2==4 & !is.na(Mutation_2) & Mutation_2=="T")]
+    subset<-subset[!(Gene=="OPRK1" & !is.na(Position_mutated_2) & Position_mutated_1==10 & !is.na(Mutation_2) & Mutation_2=="T")]
+    subset<-subset[!(Gene=="OPRK1" & !is.na(Position_mutated_2) & Position_mutated_2==10 & !is.na(Mutation_2) & Mutation_2=="T")]
+    subset<-subset[!(Gene=="MAPK10" & !is.na(Position_mutated_1) & Position_mutated_1==12 & !is.na(Mutation_1) & Mutation_1=="A")]
+    subset<-subset[!(Gene=="MAPK10" & !is.na(Position_mutated_2) & Position_mutated_2==12 & !is.na(Mutation_2) & Mutation_2=="A")]
+    
+  # MAPK10 has single mutants >15 but no double mutants. Discard these:
+    subset<-subset[Position_mutated_1<16 | is.na(Position_mutated_1)] 
+  # A few rows are duplicated, they are annotated as single mutants as well as double_mutants_11-15nts_downstream. Keep unique entries:
+    subset<-subset[!duplicated(subset$nt_seq)] 
+  # seq_interest contains only the sequence downstream the stop, what we want to fit: 
+    subset[, seq_interest:=unlist(regmatches(nt_seq, regexpr("TGA", nt_seq), invert = TRUE))[2], by=1:nrow(subset)] 
+  
+  # This line is only for OPRK1 (because there is a TGA in the upstream part):
+    if (genes[j]=="OPRK1"){
+      subset[, seq_interest:=unlist(regmatches(seq_interest, regexpr("TGA", seq_interest), invert = TRUE))[2], by=.I]
+      }
+    subset[, seq_interest:=substr(seq_interest,1, 15)]
+
+    subset_s2c <- lapply(subset$seq_interest, FUN="s2c")
+    subset_s2c <- data.table(do.call(rbind,subset_s2c)) # Table where each column is a nucleotide position
+    my_data <- data.frame(subset_s2c, RT_binomial=subset$RT_binomial, nt_seq=subset$nt_seq, sd=subset$sd_RT) # Add a column with the RT, sd_RT and nt_seq of each variant
+    my_data <- data.table(my_data)
+    wt_seq <- "CTAGAAGATCGCACT" # Run the 3 models using the AQP4 WT sequence, to later be able to use model geneA to predict geneB.
+    # If want to run each gene with its WT sequence, run these lines:
+      # if (genes[j]=="AQP4"){wt_seq <- "CTAGAAGATCGCACT"} # specify the WT sequence.  
+      # else if (genes[j]=="OPRK1"){wt_seq <- "CTAGAAGATCGCACT"} # The real OPRK1 WT is CTAGTCGTGGAGATG
+      # else if (genes[j]=="MAPK10"){wt_seq <- "CTAGAAGATCGCACT"} # The real MAPK10 WT is CTAGCCGCCTGCCTG
+    
+  # --- Make the WT nucleotide the reference level at each position ------------
+    pos_cols <- names(subset_s2c)          # "V1" ... "V15"
+    wt_nt    <- strsplit(wt_seq, "")[[1]]  # "C" "T" "A" "G" ...
+    stopifnot(length(wt_nt) == length(pos_cols))
+    
+    my_data[, (pos_cols) := Map(
+      function(x, ref) relevel(factor(x, levels = c("A", "C", "G", "T")), ref = ref),
+      .SD, wt_nt
+    ), .SDcols = pos_cols]
+    
+  # One-hot encoding:
+    my_features <- model.matrix(RT_binomial~. - nt_seq - sd, my_data)
+    stopifnot(nrow(my_features) == nrow(my_data))
+    tmp_df <- data.table(my_features, RT_binomial = my_data[,RT_binomial], nt_seq = my_data[,nt_seq], sd = my_data[,sd])
+    tmp_df[,`(Intercept)`:=NULL]
+    
+  # Save the one-hot encoded dataset (will be used later for cross-genemodels predictions):
+    assign(paste0("my_modeldata_", genes[j]), copy(tmp_df))
+    saveRDS(tmp_df, file = file.path(models_dir, paste0("my_modeldata_", genes[j],".rds")))
+
+  # Run the model with 10 cross-validation rounds:
+  # scale the data to c(0,1) to fit good linear regression models
+    scaling_fc(tmp_df, "min", "max", "my_modeldata") 
+    set.seed(721)
+  # Split rows in 10 training folds:
+    training.samples_1 <- my_modeldata[, RT_binomial] %>% 
+      createFolds(k = 10, list = TRUE, returnTrain = TRUE)
+    
+  # Run each fold:
+    for (i in 1:length(training.samples_1)){
+      train.data_1  <- my_modeldata[unlist(training.samples_1[i]), ]
+      test.data_1 <-  my_modeldata[-unlist(training.samples_1[i]), ]
+      model <- glm(RT_binomial ~ ., train.data_1[, !c("nt_seq", "sd")], family="binomial") # Change to 'family = gaussian' for fitting a linear model.
+    # Save one of the 10 models, arbitrarly the last one.
+      if (i==10){ 
+        saveRDS(model, file = file.path(models_dir, paste0("model_", genes[j],".rds")))
+        assign(paste0("model_", genes[j]), copy(model))
+      }
+    # Run predicitions, retain coefficients and calculate residuals:
+      # 'tmp_predictions' stores predictions for one fold:
+        tmp_predictions<-data.frame(predicted=predict(model, test.data_1, type = "response"), 
+                                    observed=test.data_1$RT_binomial,
+                                    nt_seq=test.data_1$nt_seq,
+                                    sd=test.data_1$sd)
+      
+      # 'predictions_tmp' stores the predictions across the 10 folds:
+        predictions_tenfolds<-as.data.table(rbind(predictions_tenfolds, tmp_predictions)) 
+      
+      # Store coefficients:
+        coeffs<-as.data.frame(model$coefficients) 
+        coeffs$mutation<-rownames(coeffs)
+        coeffs<-as.data.table(coeffs)
+        setnames(coeffs, colnames(coeffs), c(paste0("fold",i), "mutation"))
+        setcolorder(coeffs, c("mutation", paste0("fold",i)))
+        if (i==1){
+          coeffs_tenfolds<-copy(coeffs)
+         }
+        else {
+          coeffs_tenfolds<-as.data.table(
+            left_join(coeffs_tenfolds, coeffs, by="mutation")
+          )
+        }
+      
+      # Calculate residuals:
+        tmp_residuals<-data.table((subset[-unlist(training.samples_1[i]), ]), 
+                                    observed=test.data_1$RT_binomial,
+                                    predicted=predict(model, test.data_1, type = "response"))
+        tmp_residuals[, residuals := (observed-predicted), by=.I]
+        tmp_residuals[, c("pos1_and_mut1", "pos2_and_mut2") := .(as.factor(paste(Position_mutated_1, Mutation_1, sep="")),
+                                                                 as.factor(paste(Position_mutated_2, Mutation_2, sep="")))]
+        residuals_tenfolds = as.data.table(rbind(residuals_tenfolds, tmp_residuals))
+      }
+    
+# -------- After running the 10 folds for each gene, and before running the next gene: 
+    
+    # Rescale predictions_tenfolds and observations
+      rescaling_fc(predictions_tenfolds, "predictions_tenfolds_rescaled")
+      predictions_tenfolds_rescaled[, Gene:=genes[j]]; coeffs[, Gene:=genes[j]]
+      
+    # Calculate the mean, sd and number of folds where the coefficeint was estimated, across the 10 folds: 
+      fold_cols <- grep("fold", names(coeffs_tenfolds), value = TRUE)
+      coeffs_tenfolds[, `:=`(
+        n_folds  = rowSums(!is.na(.SD)),
+        mean = rowMeans(.SD, na.rm = FALSE),
+        sd   = apply(.SD, 1, sd, na.rm = TRUE),
+        Gene = genes[j]
+        ), .SDcols=fold_cols]
+      
+    # Rescale residuals:
+      residuals_tenfolds[, sign_residuals:= if_else(grepl("-", residuals), "-", "+")]
+      residuals_tenfolds$residuals<-scales::rescale(abs(residuals_tenfolds$residuals), to = c(0, max), from = c(0, 1))*100
+      residuals_tenfolds[, residuals:=paste0(sign_residuals, residuals), by=.I]
+      
+    # Store each gene prediction, coeffs and residuals_tenfolds into their respective lists objects:
+      predictions_allgenes[[j]]<-predictions_tenfolds_rescaled
+      coeffs_allgenes[[j]]<-coeffs_tenfolds
+      residuals_allgenes[[j]]<-residuals_tenfolds
+}
+
+  
+  
+# --------- The loop finishes here
+  
+# Convert the lists into datatables 
+  predictions_allgenes<-rbindlist(predictions_allgenes)
+  coeffs_allgenes<-rbindlist(coeffs_allgenes)
+  residuals_allgenes<-rbindlist(residuals_allgenes)
+# Remove duplicated rows:
+  residuals_allgenes<-residuals_allgenes[!duplicated(nt_seq)]
+
+# Factorize the gene column:
+  predictions_allgenes$Gene<-factor(predictions_allgenes$Gene, levels=c("AQP4", "OPRK1", "MAPK10"))
+  coeffs_allgenes$Gene<-factor(coeffs_allgenes$Gene, levels=genes)
+  coeffs_allgenes$Gene<-factor(coeffs_allgenes$Gene, levels=genes)
+  
+# Rename coefficients
+  setnames(coeffs_allgenes, "mean", "coeff")
+  
+# Residuals
+  # Normalize residuals for the RT dynamic range of each gene
+  residuals_allgenes[, residuals_norm:=residuals/LM_dtbl[Gene==.BY$Gene, max(RT)], by=Gene]
+  
+# Z-score (to order residuals based on how different from the mean they are):
+    residuals_allgenes[, z_score :=
+      (residuals - mean(residuals, na.rm = TRUE)) / sd(residuals, na.rm = TRUE),
+    by = Gene]
+# Use the Z-score to flag the higest residuals:
+  residuals_allgenes[, higher_than_3SD:=if_else(z_score>3, "*", ""), by=Gene] 
+# I can also the normalized residuals to identify the largest residuals, using the same threshold for all genes 
+# That's the main advantage, this yields the same number of mutations across genes. Whereas using the Z-score threshold doesn't ensure that.
+  residuals_allgenes[, top_residuals:=if_else(abs(residuals_norm)>0.08, "*", ""), by=1:nrow(residuals_allgenes)]
+
+ # T-test comparing the residuals of each variant to 0 (using the sd_RT, since I only have one residual per variant (each fold predicts only 10% of the variants))
+  residuals_allgenes[, pval_diff_from_0:={
+    t <- ((residuals - 0) / (unique(sd_RT)/sqrt(3)))
+    p <- pt(-abs(t), df = 2)}, 
+    by=.I]
+  # Adjust pvalue using BH/FDR:
+  residuals_allgenes[, FDR_diff_from_0 := p.adjust(pval_diff_from_0, method = "BH"), by="Gene"]
+  residuals_allgenes[, sign:=if_else(pval_diff_from_0<0.1, "*", ""), by=1:nrow(residuals_allgenes)]
+
+ 
+  
+```
+
+# Plot predicted vs observed:
+```{r, warning=F, fig.height=3, fig.width=9}
+
+p12<-ggplot(predictions_allgenes) + geom_point(aes(x=predicted, y=observed), alpha=.5) + p +
+  labs(x="Predicted", y="Observed") + facet_wrap(~Gene, ncol=3, scales="free") + stat_cor(aes(y=observed, x=predicted, label = ..rr.label..), size=5, label.y.npc=c(1,1)) 
+p12
+
+```
+
+# Save plots
+```{r, warning = FALSE}  
+pdf(file.path(plot_dir, "Pred_vs_obs_BBB.pdf"), height = 3, width = 9)
+print(p12); dev.off()
+```
+
+
+
+# Use model trained on one gene to predict the other genes:
+
+```{r, warning=F, fig.height=5.5, fig.width=10}
+
+# These 3 mutations were not included in the model because the introduce a second PTC:
+  my_modeldata_OPRK1[,"V10T":=c(rep(0, (nrow(my_modeldata_OPRK1)-1)),1)]
+  my_modeldata_AQP4[,"V4T":=c(rep(0, (nrow(my_modeldata_AQP4)-1)),1)]
+  my_modeldata_MAPK10[,"V12A":=c(rep(0, (nrow(my_modeldata_MAPK10)-1)),1)]
+  
+# The model needs scaled observations:
+  scaling_fc(my_modeldata_AQP4, "min", "max", "my_modeldata_AQP4_rescaled")
+  scaling_fc(my_modeldata_OPRK1, "min", "max", "my_modeldata_OPRK1_rescaled")
+  scaling_fc(my_modeldata_MAPK10, "min", "max", "my_modeldata_MAPK10_rescaled")
+  
+
+# Predict:
+  predictions_1 <- data.frame(predicted=predict(model_AQP4, my_modeldata_MAPK10_rescaled[V4T==0], type = "response")*100, 
+                              observed=my_modeldata_MAPK10[V4T==0, RT_binomial*100], train="AQP4", test="MAPK10")
+  predictions_1$predicted<-scales::rescale(predictions_1$predicted, c(my_modeldata_AQP4[, min(RT_binomial)], my_modeldata_AQP4[, max(RT_binomial)]))*100
+  
+  predictions_2 <- data.frame(predicted=predict(model_AQP4, my_modeldata_OPRK1_rescaled[V4T==0], type = "response")*100, 
+                              observed=my_modeldata_OPRK1[V4T==0, RT_binomial*100], train="AQP4", test="OPRK1")
+  predictions_2$predicted<-scales::rescale(predictions_2$predicted, c(my_modeldata_AQP4[, min(RT_binomial)], my_modeldata_AQP4[, max(RT_binomial)]))*100
+  
+  predictions_3 <- data.frame(predicted=predict(model_MAPK10, my_modeldata_AQP4_rescaled[V12A==0], type = "response")*100, 
+                              observed=my_modeldata_AQP4[V12A==0, RT_binomial*100], train="MAPK10", test="AQP4")
+  predictions_3$predicted<-scales::rescale(predictions_3$predicted, c(my_modeldata_MAPK10[, min(RT_binomial)], my_modeldata_MAPK10[, max(RT_binomial)]))*100
+  
+  predictions_4 <- data.frame(predicted=predict(model_MAPK10, my_modeldata_OPRK1_rescaled[V12A==0], type = "response")*100, 
+                              observed=my_modeldata_OPRK1[V12A==0, RT_binomial*100], train="MAPK10", test="OPRK1")
+  predictions_4$predicted<-scales::rescale(predictions_4$predicted, c(my_modeldata_MAPK10[, min(RT_binomial)], my_modeldata_MAPK10[, max(RT_binomial)]))*100
+  
+  predictions_5 <- data.frame(predicted=predict(model_OPRK1, my_modeldata_AQP4_rescaled[V10T==0], type = "response")*100, 
+                              observed=my_modeldata_AQP4[V10T==0, RT_binomial*100], train="OPRK1", test="AQP4")
+  predictions_5$predicted<-scales::rescale(predictions_5$predicted, c(my_modeldata_OPRK1[, min(RT_binomial)], my_modeldata_OPRK1[, max(RT_binomial)]))*100
+  
+  predictions_6 <- data.frame(predicted=predict(model_OPRK1, my_modeldata_MAPK10_rescaled, type = "response")*100, 
+                              observed=my_modeldata_MAPK10[, RT_binomial*100], train="OPRK1", test="MAPK10")
+  predictions_6$predicted<-scales::rescale(predictions_6$predicted, c(my_modeldata_OPRK1[, min(RT_binomial)], my_modeldata_OPRK1[, max(RT_binomial)]))*100
+  
+  tmp_predictions<-data.table(rbind(predictions_1, predictions_2, predictions_3, predictions_4, predictions_5, predictions_6))
+
+# Generate the plots:
+  genes<-c("AQP4", "OPRK1", "MAPK10")
+  llista<-list()
+  for (i in 1:length(genes)){
+  llista[[i]]<-ggplot(tmp_predictions[train==genes[i],]) + geom_point(aes(x=predicted, y=observed), alpha=.5) + p + ggtitle(genes[i]) +
+    labs(x="Predicted", y="Observed") + facet_wrap(~test, ncol=1) + stat_cor(aes(y=observed, x=predicted, label = ..rr.label..), size=5, label.y.npc=c(1,1)) +
+    theme(axis.title.x=element_blank(), plot.title=element_text(size=20, face="bold"))
+  }
+  
+  p14<-ggarrange(plotlist = llista, ncol = 3)
+  p14
+```
+
+
+```{r, warning = FALSE}  
+pdf(file.path(plot_dir, "Crossed_models_BBB.pdf"), height = 5.5, width = 12)
+print(p14); dev.off()
+```
+
+
+# Model coefficients:
+# Coefficients heatmaps: 
+```{r, warning=F, fig.height=6, fig.width=8}
+
+# Create SubstrRight function to retrieve the last (or the desired last) characters of a string:
+  substrRight <- function(x, n){substr(x, nchar(x)-n+1, nchar(x))} 
+  
+  coeffs_allgenes[, c("nucleotide", "residue"):=.(substrRight(mutation, 1), toupper(unlist(strsplit(mutation, "[ACTG]")))), by=1:nrow(coeffs_allgenes)]
+  coeffs_allgenes[, residue:=unlist(strsplit(as.character(residue), "V"))[2], by=1:nrow(coeffs_allgenes)]
+  coeffs_allgenes$residue <- factor(coeffs_allgenes$residue, levels = c("1", "2", "3","4", "5", "6", "7","8","9","10","11","12","13","14","15"))
+
+    p13<-ggplot(coeffs_allgenes[!mutation%chin%c("`(Intercept)`", "(Intercept)") & nucleotide!=")"],aes(x=residue, y=nucleotide, fill = coeff)) + 
+      geom_tile() +
+      facet_wrap(~Gene, ncol=1) + p + 
+      scale_fill_gradient2( low = "red", mid="white", high = "blue", na.value = "black", name = "Coeffs") + theme(axis.title.x=element_blank(), axis.title.y=element_blank())
+    p13
+    
+```
+
+```{r, warning = FALSE}  
+pdf(file.path(plot_dir, "Coeffs.pdf"), height = 6, width = 6)
+print(p13); dev.off()
+```
+
+# Coefficients correlation across genes:
+```{r, warning=F, fig.height=3, fig.width=9}
+
+coeffs_allgenes_wide <- coeffs_allgenes[!mutation%chin%c("`(Intercept)`", "(Intercept)"), c("coeff", "Gene", "mutation", "nucleotide", "residue")]
+coeffs_allgenes_wide <- data.table(spread(coeffs_allgenes_wide, Gene, coeff)) # generate the long to wide version of the coeffs_alldrugs dtbl.
+
+
+  coeffs_corr_fnc<-function(a,b){
+  ggplot(coeffs_allgenes_wide, aes_string(x=a, y=b, label="residue")) + 
+      geom_text(data=coeffs_allgenes_wide[residue%in%c("1","2","3","4")], nudge_x=.15) + geom_point(alpha=.5) +  
+      geom_smooth(method='lm', se = FALSE, color="black") + stat_cor(aes(label = ..r.label..), size=6) + 
+      geom_smooth(data=coeffs_allgenes_wide[!residue%in%c("1","2","3","4")], method='lm', se = FALSE, color="#E20303") + stat_cor(aes(label = ..r.label..), size=6) + 
+      stat_cor(aes(label = ..r.label..), size=6, color="black") +
+      stat_cor(data=coeffs_allgenes_wide[!residue%in%c("1","2","3","4")], aes(label = ..r.label..), size=6, color="#E20303", label.y = 0.2) +
+      p}
+
+
+  p1<-coeffs_corr_fnc("AQP4", "MAPK10")
+  p2<-coeffs_corr_fnc("AQP4", "OPRK1")
+  p3<-coeffs_corr_fnc("OPRK1", "MAPK10")
+  
+  p14<-ggarrange(p1,p2,p3, ncol=3)
+  p14
+```  
+
+```{r, warning = FALSE}  
+pdf(file.path(plot_dir, "Coeffs_corrs.pdf"), height = 9, width = 3)
+print(p14); dev.off()
+```
+
+
+
+# --- Calculate specific epistasis (the residuals of the 1st order linear model):
+
+# Adding artificially all positions which were not included in the models because they introduced a second PTC:
+```{r, warning = FALSE, fig.height=6, fig.width=8}  
+  
+genes<-c("AQP4", "OPRK1", "MAPK10")
+list<-list()
+for (i in 1:length(genes)){
+  list[[i]]<-LM_dtbl[replicate==1 & (Mutation_type=="double_mutants_downstream_+1/+10nts") |
+                      (Mutation_type=="double_mutants_11-15nts_downstream")][Gene==genes[i]]
+
+  list[[i]][, c("pos1_and_mut1", "pos2_and_mut2", "Gene") := .(as.factor(paste(Position_mutated_1, Mutation_1, sep="")),
+                                              as.factor(paste(Position_mutated_2, Mutation_2, sep="")), genes[i])]
+}
+
+    grid<-rbindlist(list)
+  
+    grid[, pos1_and_mut1 := as.character(pos1_and_mut1)]
+    grid[, pos2_and_mut2 := as.character(pos2_and_mut2)]
+    
+  # Add the columns of 'residuals_allgenes' set to NAs:
+    x<-setdiff(colnames(residuals_allgenes), colnames(grid))
+    grid[, (x):=NA]
+    
+  # merge
+      residuals_allgenes <- rbind(grid, residuals_allgenes)
+     
+
+# This loop is to order the axis of the residuals plot:
+  make_ordered_levels <- function(x) {
+    lvls <- levels(x)
+    lvls <- lvls[lvls != "NANA"]
+    
+    positions <- as.integer(sub("[ACGT]$", "", lvls))
+    muts <- sub("^[0-9]+", "", lvls)
+    
+    ordered_lvls <- lvls[order(positions, muts)]
+  }
+  
+  residuals_allgenes$pos1_and_mut1 <- factor(
+    residuals_allgenes$pos1_and_mut1,
+    levels = make_ordered_levels(residuals_allgenes$pos1_and_mut1)
+  )
+  
+  residuals_allgenes$pos2_and_mut2 <- factor(
+    residuals_allgenes$pos2_and_mut2,
+    levels = make_ordered_levels(residuals_allgenes$pos2_and_mut2)
+  )
+  
+```
+
+# Plot
+```{r, warning=F, fig.height=6, fig.width=18}
+  # Residuals of 1st order model:
+  
+  plot_layout<-list(p, theme(text=element_text(size=20),axis.text.x = element_text(size=7, angle=90, vjust=0.5, hjust=1), 
+                           axis.text.y = element_text(size=7), axis.title.x = element_blank(), axis.title.y = element_blank(), legend.position = c(0.9,0.3)),
+                    scale_fill_gradient2(low="red", mid="white", high="blue", na.value = "#C7C7C7", midpoint=0, name="Residuals"),  facet_wrap(~Gene, scales="free"))
+  
+  p15<-ggplot(residuals_allgenes[WT=="no" & !is.na(pos2_and_mut2)], 
+      aes(x=pos1_and_mut1, y=pos2_and_mut2, label=higher_than_3SD, fill=residuals)) + 
+      geom_tile() +
+      geom_tile(data = residuals_allgenes[PTC=="yes"], color="black", width = .95, height = .95, linewidth = 0.5, alpha=0) + 
+      plot_layout + geom_text(color = "black")  +
+    geom_segment(
+      data = data.frame(
+        x    = seq(3.5, 40, by = 3),          
+        y    = c(0.5, 3.5, 6.5, 9.5, 12.5, 15.5, 18.5, 21.5, 24.5, 27.5, 30.5, 33.5, 36.5),
+        yend = c(rep(27.5, 8), rep(39.5, 5)) 
+      ),
+        aes(x = x, xend = x, y = y, yend = yend),
+        inherit.aes = FALSE,
+        linetype = "dashed", color = "black", linewidth = 0.3
+      ) + 
+    geom_segment(
+      data = data.frame(
+        y    = seq(3.5, 40, by = 3),
+        x    = c(rep(0.5, 9), rep(27.5, 4)),
+        xend = c(6.5, 9.5, 12.5, 15.5, 18.5, 21.5, 24.5, 27.5, 30.5, 33.5, 36.5, 39.5, 39.5)  
+      ),
+        aes(x = x, yend = y, y = y, xend = xend),
+        inherit.aes = FALSE,
+        linetype = "dashed", color = "black", linewidth = 0.3
+      )
+  
+  p15
+
+```
+
+```{r, warning = FALSE}  
+pdf(file.path(plot_dir, "Residuals.pdf"), height = 6, width = 18)
+print(p15); dev.off()
+```
+
+
+# ----- ΔRT vs starting_RT plots:
+
+```{r, warning=F, fig.width=6, fig.height=6}
+
+for (gene in c("AQP4", "MAPK10", "OPRK1")) {
+  mutation_delta_plots(
+    LM_dtbl, gene,
+    out_dir = file.path(plot_dir, "delta_RT_singles_doubles", gene)
+  )
+}
+
+```

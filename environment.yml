@@ -1,0 +1,26 @@
+name: Programmed_readthrough
+channels:
+  - conda-forge
+  - nodefaults
+dependencies:
+  - r-base=4.4
+  - pandoc
+  - r-rmarkdown
+  - r-knitr
+  - r-data.table
+  - r-dplyr
+  - r-tidyr
+  - r-tibble
+  - r-purrr
+  - r-stringr
+  - r-seqinr
+  - r-stringdist
+  - r-matrixstats
+  - r-caret
+  - r-rstatix
+  - r-ggplot2
+  - r-ggpubr
+  - r-scales
+  - r-ggridges
+  - r-ggally
+  - r-ggseqlogo

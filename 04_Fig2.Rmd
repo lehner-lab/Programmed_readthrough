@@ -1,0 +1,361 @@
+---
+title: "Fig2"
+output: html_document
+date: "2026-08-28"
+---
+
+#    ------------------ CTAG randomization
+
+# CTAG randomization kills readthrough consistently across genes
+```{r, warning=F, fig.height=5, fig.width=10}
+# How many genes have a significantly lower RT over WT, keeping the FDR at 0.05:
+  LM_dtbl[reads>100 & Mutation_type=="CTAG_randomization" & RT_WTnorm<0 & FDR_diff_from_WT<0.05 & replicate==1, .N, by=Gene]
+
+```
+
+# Create the 'hamm_dist_CTAGr' column, with how many mutations away from CTAG each variant is:
+```{r, warning=F}
+
+  LM_dtbl[Mutation_type == "CTAG_randomization",
+        hamm_dist_CTAGr := as.character(stringdist::stringdist(Mutation, "CTAG", method = "hamming"))]
+
+
+```
+
+```{r, warning=F, fig.height=5, fig.width=8}
+
+p7<-ggplot(LM_dtbl[reads>100 & Mutation_type=="CTAG_randomization" & hamm_dist_CTAGr!=0 & Gene%chin%c("AQP4", "OPRK1", "MAPK10")], 
+      aes(x=Gene, y=RT, fill=hamm_dist_CTAGr, label=Mutation)) + 
+      geom_boxplot(outlier.shape = NA, alpha=.1) + 
+      geom_point(position = position_jitterdodge(jitter.width=0.1), aes(color = hamm_dist_CTAGr), alpha=.5) + 
+      hamdist_colors + hamdist_fills +
+      p + theme(legend.text=element_text(size=15)) +  labs(y="Readthrough (%)") +
+      geom_text(data=LM_dtbl[Gene=="MAPK10" & Mutation_type=="CTAG_randomization" & RT>0.5 & hamm_dist_CTAGr==1 & replicate==1], 
+                aes(x=Gene, y=RT, fill=hamm_dist_CTAGr, label=Mutation), position = position_jitter(width = 0, height = 0.15), hjust=2, size=4) +
+      geom_text(data=LM_dtbl[Gene=="MAPK10" & Mutation_type=="CTAG_randomization" & RT>0.6 & hamm_dist_CTAGr==2 & replicate==1], 
+                  aes(x=Gene, y=RT, fill=hamm_dist_CTAGr, label=Mutation), position = position_jitter(width = 0, height = 0.15), hjust=0, size=4) +
+      geom_text(data=LM_dtbl[Gene=="AQP4" & Mutation_type=="CTAG_randomization" & RT>0.25 & hamm_dist_CTAGr==1 & replicate==1], 
+                   aes(x=Gene, y=RT, fill=hamm_dist_CTAGr, label=Mutation), position = position_jitter(width = 0, height = 0.05), hjust=2, size=4) +
+      geom_text(data=LM_dtbl[Gene=="OPRK1" & Mutation_type=="CTAG_randomization" & RT>0.3 & hamm_dist_CTAGr==1 & replicate==1], 
+                   aes(x=Gene, y=RT, fill=hamm_dist_CTAGr, label=Mutation), position = position_jitter(width = 0, height = 0.05), hjust=2, size=4)
+  
+p7
+
+```  
+
+```{r, warning = FALSE}  
+pdf(file.path(plot_dir, "CTAG_rand.pdf"), height = 5, width = 8)
+print(p7); dev.off()
+```
+
+
+
+# Generate sequence logos of the sequences undergoing readthrough:
+```{r, warning=F, fig.height=5, fig.width=3.5}
+
+# Sequences undergoing readthrough (arbitrary threshold >0.3): 
+  A_hits<-LM_dtbl[Mutation_type == "CTAG_randomization" & Gene=="AQP4" & replicate==1 & RT>0.3, Mutation]
+  O_hits<-LM_dtbl[Mutation_type == "CTAG_randomization" & Gene=="OPRK1" & replicate==1 & RT>0.3, Mutation]
+  M_hits<-LM_dtbl[Mutation_type == "CTAG_randomization" & Gene=="MAPK10" & replicate==1 & RT>0.5, Mutation]
+  length(A_hits); length(O_hits); length(M_hits)
+  
+  A_hits<-gsub("T", "U", A_hits)
+  O_hits<-gsub("T", "U", O_hits)
+  M_hits<-gsub("T", "U", M_hits)
+  
+p1<-ggseqlogo::ggseqlogo(A_hits, method = "prob", col_scheme = custom_colors) +
+    theme(axis.text.x = element_text(size = 15),
+          axis.text.y = element_text(size = 15),
+          plot.title = element_text(hjust = 0.5, size=20)) +
+  labs(title = "AQP4", x="", y="")
+
+p2<-ggseqlogo::ggseqlogo(O_hits, method = "prob", col_scheme = custom_colors) +
+    theme(axis.text.x = element_text(size = 15),
+          axis.text.y = element_text(size = 15),
+          plot.title = element_text(hjust = 0.5, size=20)) +
+  labs(title = "OPRK1", x="", y="")
+
+p3<-ggseqlogo::ggseqlogo(M_hits, method = "prob", col_scheme = custom_colors) +
+    theme(axis.text.x = element_text(size = 15),
+          axis.text.y = element_text(size = 15),
+          plot.title = element_text(hjust = 0.5, size=20)) +
+  labs(title = "MAPK10", x="", y="")
+
+  p4a<-ggarrange(p1, p2, p3, nrow=3)
+  p4a  
+```
+```{r, warning = FALSE}  
+pdf(file.path(plot_dir, "CUAG_Logos.pdf"), height = 7.5, width = 5)
+print(p4a); dev.off()
+```
+
+
+
+# Plot correlations across genes
+
+```{r, warning=F, fig.height=3, fig.width=12}
+
+  AQP4_ctag<-LM_dtbl[Mutation_type == "CTAG_randomization" & Gene=="AQP4" & replicate==1, c("Mutation", "RT")]; setnames(AQP4_ctag, "RT", "AQP4")
+  OPRK1_ctag<-LM_dtbl[Mutation_type == "CTAG_randomization" & Gene=="OPRK1" & replicate==1, c("Mutation", "RT")]; setnames(OPRK1_ctag, "RT", "OPRK1")
+  MAPK10_ctag<-LM_dtbl[Mutation_type == "CTAG_randomization" & Gene=="MAPK10" & replicate==1, c("Mutation", "RT", "hamm_dist_CTAGr")]; setnames(MAPK10_ctag, c("RT", "hamm_dist_CTAGr"),  c("MAPK10", "HD"))
+
+  ctag_all<-left_join(left_join(AQP4_ctag, OPRK1_ctag, by="Mutation"), MAPK10_ctag, by="Mutation")
+  
+  p1<-ggplot(ctag_all[Mutation!="CTAG"], aes(x=AQP4, y=OPRK1, color=HD)) + geom_point(alpha=.5, size=2) + p +
+    stat_cor(aes(label = ..r.label..), size=5, r.accuracy = 0.01) + HD_colors
+  p2<-ggplot(ctag_all[Mutation!="CTAG"], aes(x=AQP4, y=MAPK10, color=HD)) + geom_point(alpha=.5, size=2) + p +
+    stat_cor(aes(label = ..r.label..), size=5, r.accuracy = 0.01) + HD_colors
+  p3<-ggplot(ctag_all[Mutation!="CTAG"], aes(x=OPRK1, y=MAPK10, color=HD)) + geom_point(alpha=.5, size=2) + p +
+    stat_cor(aes(label = ..r.label..), size=5, r.accuracy = 0.01) + HD_colors
+  
+  p4b<-ggarrange(p1, p2, p3, nrow=1)
+  p4b  
+```
+
+
+
+```{r, warning = FALSE}  
+pdf(file.path(plot_dir, "CUAG_cors.pdf"), height = 3, width = 12)
+print(p4b); dev.off()
+```
+
+
+
+
+
+#    ------------------ Single mutants downstream
+
+
+# Generate the 'singmuts' datatable:
+```{r, warning=F, fig.height=5, fig.width=10}
+
+  singmuts<-LM_dtbl[reads>100 & Gene!="OPRL1" & Mutation_type=="Single_mutants_downstream_allnts",]
+
+```
+
+# Add the WT nucleotides in each position with NAs, to flag them in the heatmap:
+```{r, warning = FALSE, fig.height=6, fig.width=8} 
+
+  # Do this by creating the full grid of Gene × Position_mutated_1 × Mutation_1 and then merging the singmuts onto it (so missing combos become new rows with NA)
+    grid <- CJ(
+        Gene = unique(singmuts$Gene),
+        Position_mutated_1 = unique(singmuts[!is.na(Position_mutated_1), unique(Position_mutated_1)]),
+        Mutation_1 = c("A", "T", "C", "G"), # use codon levels from the above script
+        unique = TRUE
+      )
+    
+    grid<-grid[!(Gene!="MAPK10" & Position_mutated_1>15)]
+    
+  # left join: keep all grid rows, bring in existing columns from coeffs_up_sameWT
+    singmuts <- merge(
+      grid,
+      singmuts,
+      by = c("Gene", "Position_mutated_1", "Mutation_1"),
+      all.x = TRUE,
+      sort = FALSE
+    )
+
+```
+
+
+```{r, warning = FALSE, fig.height=6, fig.width=8}  
+
+#singmuts<-readRDS(paste0(home, "R/RT/Locmax/locmax1/Objects/singmuts.rds"))
+
+  singmuts[, sign:=if_else(FDR_diff_from_WT<0.05, "*", ""), by=1:nrow(singmuts)]
+
+# Plot heatmap:
+  p9<-ggplot(singmuts, aes(x = Position_mutated_1, y = Mutation_1, fill = RT_WTnorm, label=sign)) + 
+    scale_color_manual(values = c(yes = "black", no = NA)) +
+    geom_tile() +
+    geom_tile(data = singmuts[PTC=="yes"], color="black", width = .95, height = .95, linewidth = 0.5, alpha=0) + 
+    scale_fill_gradient2( low = "red", mid="white", high = "blue", na.value = "#ECE9E9", name = "ΔRT") + 
+    labs(x = "Mutation", y = "Treatment") + p +
+    theme(axis.title.x=element_blank(), axis.title.y=element_blank()) + 
+    facet_wrap(~Gene, ncol=1, scales="free") + geom_text(color = "black")
+  p9
+```
+
+
+```{r, warning = FALSE}  
+pdf(file.path(plot_dir, "Singles_heatmap.pdf"), height = 6, width = 8)
+print(p9); dev.off()
+```
+
+
+
+
+#    ------------------ Double mutants downstream
+
+# Generate the 'doubmuts' datatable:
+```{r, warning=F, fig.height=5, fig.width=10}
+
+# Work only with 'Double_mutants_downstream_allnts':
+  doubmuts<-LM_dtbl[reads>100 & Gene!="OPRL1" & Mutation_type%chin%c("double_mutants_downstream_+1/+10nts", "double_mutants_11-15nts_downstream"),]
+  doubmuts[, c("Mut1", "Mut2"):=.(paste0(Position_mutated_1, Mutation_1), paste0(Position_mutated_2, Mutation_2)), by=1:nrow(doubmuts)]
+  
+  tmp1<-doubmuts[!duplicated(Mut1), sort(Position_mutated_1), Mut1] %>% arrange(V1)
+  tmp2<-doubmuts[!duplicated(Mut2), sort(Position_mutated_2), Mut2] %>% arrange(V1)
+  
+  doubmuts$Mut1=factor(doubmuts$Mut1, levels=tmp1$Mut1)
+  doubmuts$Mut2=factor(doubmuts$Mut2, levels=tmp2$Mut2)
+
+  
+# How many genes have a significantly lower RT over WT, keeping the FDR at 0.05:
+  singmuts[!duplicated(nt_seq), .N, by=Gene]
+  singmuts[!duplicated(nt_seq) & RT_WTnorm<0 & FDR_diff_from_WT<0.05, .N, by=Gene]
+    13/46; 28/45; 50/81 
+  doubmuts[!duplicated(nt_seq), .N, by=Gene]
+  doubmuts[!duplicated(nt_seq) & RT_WTnorm<0 & FDR_diff_from_WT<0.05, .N, by=Gene]
+    283/495; 406/495; 456/495
+  # Total (singles + doubles):
+    296/541; 434/540; 506/576
+
+```
+
+# Adding missing mutants with NAs, to flag them in the heatmap:
+```{r, warning = FALSE, fig.height=6, fig.width=8}  
+  
+# Do this by creating the full grid of Gene × Mut1 × Mut2 and then merging the doubmuts onto it (so missing combos become new rows with NA
+    grid <- CJ(
+        Gene = unique(doubmuts$Gene),
+        Mut1 = doubmuts[WT=="no" & !is.na(Mut1), unique(Mut1)],
+        Mut2 = doubmuts[WT=="no" & !is.na(Mut2), unique(Mut2)],
+        WT="no",
+        unique = TRUE
+      )
+  
+    grid[, Mut1 := as.character(Mut1)]
+    grid[, Mut2 := as.character(Mut2)]
+    
+  # Get rid of those 'mutations' which in reality are not they are the WT:
+    genes<-unique(grid$Gene)
+    for (i in 1:length(genes)){
+      real_mutations<-as.character(doubmuts[Gene==genes[i] & WT=="no" & !is.na(Mut2), unique(c(Mut1, Mut2))])
+      grid<-grid[Gene!=genes[i] | (Gene==genes[i] & Mut1%chin%real_mutations & Mut2%chin%real_mutations)]
+    }
+      
+  # Remove duplicated rows: 
+      grid <- grid[Mut1 != Mut2]
+      
+    # 
+      grid[, Mut1_num:=as.numeric(gsub("[^0-9]", "", Mut1))]
+      grid[, Mut2_num:=as.numeric(gsub("[^0-9]", "", Mut2))]
+      grid <- grid[Mut1_num < Mut2_num,]
+      grid[, doubmuts:=paste0(Mut1_num, "_", Mut2_num)]
+      grid <- grid[!doubmuts%chin%c("1_11", "1_12", "1_13", "1_14", "1_15",
+                           "2_11", "2_12", "2_13", "2_14", "2_15",
+                           "3_11", "3_12", "3_13", "3_14", "3_15",
+                           "4_11", "4_12", "4_13", "4_14", "4_15",
+                           "5_11", "5_12", "5_13", "5_14", "5_15",
+                           "6_11", "6_12", "6_13", "6_14", "6_15",
+                           "7_11", "7_12", "7_13", "7_14", "7_15",
+                           "8_11", "8_12", "8_13", "8_14", "8_15",
+                           "9_11", "9_12", "9_13", "9_14", "9_15",
+                           "10_11", "10_12", "10_13", "10_14", "10_15")]
+      
+      
+      # left join: keep all grid rows, bring in existing columns from doubmuts:
+      doubmuts <- merge(
+        grid[, c("Gene", "Mut1", "Mut2", "WT")],
+        doubmuts,
+        by = c("Gene", "Mut1", "Mut2", "WT"),
+        all.x = TRUE,
+        sort = FALSE
+      )
+
+  tmp1<-doubmuts[!duplicated(Mut1), sort(Position_mutated_1), Mut1] %>% arrange(V1)
+  tmp2<-doubmuts[!duplicated(Mut2), sort(Position_mutated_2), Mut2] %>% arrange(V1)
+  
+  doubmuts$Mut1=factor(doubmuts$Mut1, levels=tmp1$Mut1)
+  doubmuts$Mut2=factor(doubmuts$Mut2, levels=tmp2$Mut2)
+
+```
+
+
+
+# This loop is to order the axis of the doubmuts plot:
+```{r, warning = FALSE}  
+
+  make_ordered_levels <- function(x) {
+    lvls <- levels(x)
+    lvls <- lvls[lvls != "NANA"]
+    
+    positions <- as.integer(sub("[ACGT]$", "", lvls))
+    muts <- sub("^[0-9]+", "", lvls)
+    
+    ordered_lvls <- lvls[order(positions, muts)]
+  }
+  
+  doubmuts$Mut1 <- factor(
+    doubmuts$Mut1,
+    levels = make_ordered_levels(doubmuts$Mut1)
+  )
+  
+  doubmuts$Mut2 <- factor(
+    doubmuts$Mut2,
+    levels = make_ordered_levels(doubmuts$Mut2)
+  )
+```
+
+
+
+```{r, warning = FALSE}  
+
+# Store the fitness_rep WT scores:
+  AQP4_wt <- LM_dtbl[hamm_dist_CTAGr==0 & Gene=="AQP4", fitness_rep]
+  OPRK1_wt <- LM_dtbl[hamm_dist_CTAGr==0 & Gene=="OPRK1", fitness_rep]
+  MAPK10_wt <- LM_dtbl[hamm_dist_CTAGr==0 & Gene=="MAPK10", fitness_rep]
+
+# Calculate pvalue and significance of each 'Single_mutants_downstream_allnts' variant: 
+  doubmuts[Gene=="AQP4" & !is.na(fitness_rep), pval:=t.test(c(AQP4_wt), fitness_rep)$p.value, by=nt_seq]
+  doubmuts[Gene=="OPRK1" & !is.na(fitness_rep), pval:=t.test(c(OPRK1_wt), fitness_rep)$p.value, by=nt_seq]
+  doubmuts[Gene=="MAPK10" & !is.na(fitness_rep), pval:=t.test(c(MAPK10_wt), fitness_rep)$p.value, by=nt_seq]
+  
+  doubmuts[, sign:=if_else(pval<0.05, "*", ""), by=1:nrow(doubmuts)]
+```
+
+# Plot heatmap:
+```{r, warning = FALSE, fig.height=6, fig.width=20}  
+
+  p10<-ggplot(doubmuts[WT=="no" & !is.na(Mut1) & !is.na(Mut2)], aes(x = Mut1, y = Mut2, fill = RT_WTnorm, label=sign)) + 
+    scale_color_manual(values = c(yes = "black", no = NA)) +
+    geom_tile() +
+    geom_tile(data = doubmuts[PTC=="yes" & !is.na(Mut1) & !is.na(Mut2)], color="black", width = .95, height = .95, linewidth = 0.5, alpha=0) + 
+    scale_fill_gradient2( low = "red", mid="white", high = "blue", na.value = "black", name = "ΔRT") + labs(x = "Mutation", y = "Treatment") + 
+    p + facet_wrap(~Gene, ncol=3, scales="free") +
+    theme(axis.title.x=element_blank(), axis.title.y=element_blank()) + 
+    theme(axis.text.y=element_text(size=8), axis.text.x=element_text(size=8, angle=90, vjust=0.5, hjust=1)) +
+    geom_segment(
+      data = data.frame(
+        x    = seq(3.5, 40, by = 3),          
+        y    = c(0.5, 3.5, 6.5, 9.5, 12.5, 15.5, 18.5, 21.5, 24.5, 27.5, 30.5, 33.5, 36.5),
+        yend = c(rep(27.5, 8), rep(39.5, 5)) 
+      ),
+        aes(x = x, xend = x, y = y, yend = yend),
+        inherit.aes = FALSE,
+        linetype = "dashed", color = "black", linewidth = 0.3
+      ) + 
+    geom_segment(
+      data = data.frame(
+        y    = seq(3.5, 40, by = 3),
+        x    = c(rep(0.5, 9), rep(27.5, 4)),
+        xend = c(6.5, 9.5, 12.5, 15.5, 18.5, 21.5, 24.5, 27.5, 30.5, 33.5, 36.5, 39.5, 39.5)  
+      ),
+        aes(x = x, yend = y, y = y, xend = xend),
+        inherit.aes = FALSE,
+        linetype = "dashed", color = "black", linewidth = 0.3
+      ) +
+  geom_text(color = "black", size=2)
+  
+  p10
+  
+```
+
+```{r, warning = FALSE}  
+pdf(file.path(plot_dir, "Doubles_heatmap.pdf"), height = 6, width = 20)
+print(p10); dev.off()
+```
+
+
+

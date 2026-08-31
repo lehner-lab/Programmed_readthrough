@@ -1,0 +1,459 @@
+---
+title: "Fig5"
+output: html_document
+date: "2026-08-28"
+---
+
+# -------------------------------- Chimeras
+
+# Create the swaps dtbl, containing the subset of variants from LM_dtbl with the upstream and downstream swappings:
+# Then, annotate the blocks forming each variant.
+```{r, warning=F, fig.width=15}
+
+swaps<-LM_dtbl[reads>100][Mutation_type=="downstream_swappings" | Mutation_type=="upstream_swappings"] 
+swaps[(Mutation_type=="downstream_swappings" | Mutation_type=="upstream_swappings") & replicate==1, .N] # 432 variants
+swaps[, downstream_seq:=paste("CTAG", strsplit(nt_seq, "TGACTAG")[[1]][2], collapse="", sep = ""), by=1:nrow(swaps)]
+swaps[, upstream_seq:=strsplit(nt_seq, "TGACTAG")[[1]][1], by=1:nrow(swaps)]
+
+
+swaps[, c("down_block1", "down_block2", "down_block3"):=.("to_fill", "to_fill", "to_fill")]
+for (i in 1:nrow(swaps)){
+  if (sum(grep("CTAGAA", swaps$downstream_seq[i])==1)){
+  swaps$down_block1[i]<-"AQP4"}
+  if (sum(grep("GATCGC", swaps$downstream_seq[i])==1)){
+  swaps$down_block2[i]<-"AQP4"}
+  if (substring(swaps$downstream_seq[i], nchar(swaps$downstream_seq[i])-2, nchar(swaps$downstream_seq[i]))=="ACT"){
+  swaps$down_block3[i]<-"AQP4"}
+  if (sum(grep("CTAGTC", swaps$downstream_seq[i])==1)){
+  swaps$down_block1[i]<-"OPRK1"}
+  if (sum(grep("GTGGAG", swaps$downstream_seq[i])==1)){
+  swaps$down_block2[i]<-"OPRK1"}
+  if (substring(swaps$downstream_seq[i], nchar(swaps$downstream_seq[i])-2, nchar(swaps$downstream_seq[i]))=="ATG"){
+  swaps$down_block3[i]<-"OPRK1"}
+  if (sum(grep("CTAGGC", swaps$downstream_seq[i])==1)){
+  swaps$down_block1[i]<-"OPRL1"}
+  if (sum(grep("GTGGAC", swaps$downstream_seq[i])==1)){
+  swaps$down_block2[i]<-"OPRL1"}
+  if (substring(swaps$downstream_seq[i], nchar(swaps$downstream_seq[i])-2, nchar(swaps$downstream_seq[i]))=="CTG"){
+  swaps$down_block3[i]<-"OPRL1"}
+  if (sum(grep("CTAGCCGCC", swaps$downstream_seq[i])==1)){
+  swaps$down_block1[i]<-"MAPK10"}
+  if (sum(grep("TGCCTGCGA", swaps$downstream_seq[i])==1)){
+  swaps$down_block2[i]<-"MAPK10"}
+  if (substring(swaps$downstream_seq[i], nchar(swaps$downstream_seq[i])-8, nchar(swaps$downstream_seq[i]))=="AACCCAGCG"){
+  swaps$down_block3[i]<-"MAPK10"}
+}
+
+swaps[, c("up_block1", "up_block2", "up_block3"):=.("to_fill", "to_fill", "to_fill")]
+for (i in 1:nrow(swaps)){
+  if (sum(grep("AGAGTA", swaps$upstream_seq[i])==1)){
+  swaps$up_block3[i]<-"AQP4"}
+  if (sum(grep("TTGTCT", swaps$upstream_seq[i])==1)){
+  swaps$up_block2[i]<-"AQP4"}
+  if (sum(grep("TCAGTA", swaps$upstream_seq[i])==1)){
+  swaps$up_block1[i]<-"AQP4"}
+  if (sum(grep("GACATCGAT", swaps$upstream_seq[i])==1)){
+  swaps$up_block3[i]<-"OPRK1"}
+  if (sum(grep("GGGATGAAT", swaps$upstream_seq[i])==1)){
+  swaps$up_block2[i]<-"OPRK1"}
+  if (sum(grep("AAACCAGTA", swaps$upstream_seq[i])==1)){
+  swaps$up_block1[i]<-"OPRK1"}
+  if (sum(grep("ACGGTA", swaps$upstream_seq[i])==1)){
+  swaps$up_block3[i]<-"OPRL1"}
+  if (sum(grep("CCGCGG", swaps$upstream_seq[i])==1)){
+  swaps$up_block2[i]<-"OPRL1"}
+  if (sum(grep("CCCGCA", swaps$upstream_seq[i])==1)){
+  swaps$up_block1[i]<-"OPRL1"}
+  if (sum(grep("CCCCTG", swaps$upstream_seq[i])==1)){
+  swaps$up_block3[i]<-"MAPK10"}
+  if (sum(grep("GGTTGT", swaps$upstream_seq[i])==1)){
+  swaps$up_block2[i]<-"MAPK10"}
+  if (sum(grep("TGCAGG", swaps$upstream_seq[i])==1)){
+  swaps$up_block1[i]<-"MAPK10"}
+}
+
+# Create the upstream_swaps and downstream_swaps columns. The upstream_swaps indicates the WT upstream sequence for the variants with downstream swappings. And the other way around with the downstream_swaps columns.
+genes<-c("AQP4", "MAPK10", "OPRK1", "OPRL1")
+swaps[, upstream_swaps:="mix"]
+swaps[, downstream_swaps:="mix"]
+for (i in genes){
+  swaps[up_block1==i & up_block2==i & up_block3==i, upstream_swaps:=i]
+  swaps[down_block1==i & down_block2==i & down_block3==i, downstream_swaps:=i]
+}
+
+
+```
+
+# Interreplicate correlations:
+```{r, warning=F, fig.height=3, fig.width=3}
+
+# Downstream:
+  r1<-swaps[replicate==1 & upstream_swaps!="mix", c("fitness_rep", "down_block1", "down_block2", "down_block3", "upstream_swaps")]
+  r2<-swaps[replicate==2 & nt_seq%chin%c(swaps[replicate==1 & upstream_swaps!="mix", nt_seq]), c("fitness_rep", "down_block1", "down_block2", "down_block3", "upstream_swaps")]
+     c1<-data.table(rep1=r1$fitness_rep, rep2=r2$fitness_rep, down_block1=r1$down_block1, down_block2=r1$down_block2, down_block3=r1$down_block3, upstream_swaps=r1$upstream_swaps)
+
+    ggplot(c1, aes(y=rep1, x=rep2)) + geom_point() + p + stat_cor(aes(y=rep1, x=rep2, label = ..r.label..), size=4, label.y.npc=c(1,1)) + 
+    ggtitle("Downstream swappings") + theme(title = element_text(size=15))
+
+# Upstream:
+  r1<-swaps[replicate==1 & downstream_swaps!="mix", c("fitness_rep", "up_block1", "up_block2", "up_block3", "downstream_swaps")]
+  r2<-swaps[replicate==2 & nt_seq%chin%c(swaps[replicate==1 & downstream_swaps!="mix", nt_seq]), c("fitness_rep", "up_block1", "up_block2", "up_block3", "downstream_swaps")]
+     c1<-data.table(rep1=r1$fitness_rep, rep2=r2$fitness_rep, up_block1=r1$up_block1, up_block2=r1$up_block2, up_block3=r1$up_block3, downstream_swaps=r1$downstream_swaps)
+
+    ggplot(c1, aes(y=rep1, x=rep2)) + geom_point() + p + stat_cor(aes(y=rep1, x=rep2, label = ..r.label..), size=4, label.y.npc=c(1,1)) + 
+    ggtitle("Upstream swappings") + theme(title = element_text(size=15))
+
+
+```
+
+
+
+# ------------ Predictive models
+
+Cross-validated binomial GLMs of readthrough against the upstream and
+downstream sequence blocks of the chimera swap library. Four models are fitted:
+downstream blocks (1st and 2nd order) and upstream blocks (1st and 2nd order).
+
+# Input datasets for each model:
+```{r subsets}
+# One scaled subset per direction; both the 1st- and 2nd-order model of a
+# direction are fitted to the same data.
+subset_down <- prepare_swap_subset(
+  swaps[replicate == 1 & upstream_swaps   != "mix" & !is.na(RT)])
+
+subset_up <- prepare_swap_subset(
+  swaps[replicate == 1 & downstream_swaps != "mix" & !is.na(RT)])
+```
+
+# Formulas for each model:
+```{r formulas}
+# 2nd-order formulas use (a + b + c + d)^2, which expands to the four main
+# effects plus all six pairwise interactions -- exactly the term set written out
+# by hand in the original code.
+f_down_1st <- RT_binomial ~ down_block1 + down_block2 + down_block3 + upstream_swaps
+f_down_2nd <- RT_binomial ~ (down_block1 + down_block2 + down_block3 + upstream_swaps)^2
+
+f_up_1st   <- RT_binomial ~ up_block1 + up_block2 + up_block3 + downstream_swaps
+f_up_2nd   <- RT_binomial ~ (up_block1 + up_block2 + up_block3 + downstream_swaps)^2
+```
+
+
+# Downstream blocks, 1st order
+
+```{r fit-down-1st}
+fit_down_1st <- fit_cv_glm(subset_down, f_down_1st, seed = 123)
+
+coeffs_1storder_DBs <- annotate_1st_order(
+  fit_down_1st$coeffs,
+  # Only these two upstream swap levels are parsed as swap terms -- intentional,
+  # the downstream models have no OPRL1 upstream level.
+  swap_terms   = c("upstream_swapsMAPK10", "upstream_swapsOPRK1"),
+  block_labels = c("upstream_"   = "Upstream",
+                   "down_block1" = "DB1",
+                   "down_block2" = "DB2",
+                   "down_block3" = "DB3"),
+  short_levels = c("Upstream", "DB1", "DB2", "DB3")
+)
+
+# Plot:
+  p1a <- plot_pred_obs(fit_down_1st$predictions, "Downstream chimeras / 1st order")
+  p2a <- plot_coeffs_1st_order(coeffs_1storder_DBs, "Downstream chimeras")
+```
+
+
+# Downstream blocks, 2nd order
+
+```{r fit-down-2nd}
+fit_down_2nd <- fit_cv_glm(subset_down, f_down_2nd, seed = 222)
+
+coeffs_2ndorder_DBs <- annotate_2nd_order(
+  fit_down_2nd$coeffs,
+  block_from = "down_block", block_to = "DB",
+  swap_from  = "upstream",   swap_to  = "UB"
+)
+
+# Plot:
+  p1b <- plot_pred_obs(fit_down_2nd$predictions, "Downstream chimeras / 2nd order")
+  p2c <- plot_coeffs_2nd_order(coeffs_2ndorder_DBs,
+                               na_value = "black",
+                               y_top    = 8.5,
+                               hline_y  = c(0.5, 3.5, 6.5, 8.5))
+```
+
+
+# Upstream blocks, 1st order
+
+```{r fit-up-1st}
+fit_up_1st <- fit_cv_glm(subset_up, f_up_1st, seed = 721)
+
+coeffs_1storder_UBs <- annotate_1st_order(
+  fit_up_1st$coeffs,
+  # Three downstream swap levels here, unlike the two upstream ones above.
+  swap_terms   = c("downstream_swapsMAPK10", "downstream_swapsOPRK1",
+                   "downstream_swapsOPRL1"),
+  block_labels = c("up_block1"    = "UB1",
+                   "up_block2"    = "UB2",
+                   "up_block3"    = "UB3",
+                   "downstream_"  = "Downstream"),
+  # Note the deliberate reversal of the block order on this axis:
+  short_levels = c("UB3", "UB2", "UB1", "Downstream")
+)
+
+# Plot:
+  p1c <- plot_pred_obs(fit_up_1st$predictions, "Upstream chimeras / 1st order")
+  p2b <- plot_coeffs_1st_order(coeffs_1storder_UBs, "Upstream chimeras")
+
+```
+
+
+# Upstream blocks, 2nd order
+
+```{r fit-up-2nd}
+fit_up_2nd <- fit_cv_glm(subset_up, f_up_2nd, seed = 123)
+
+coeffs_2ndorder_UBs <- annotate_2nd_order(
+  fit_up_2nd$coeffs,
+  block_from  = "up_block",   block_to = "UB",
+  swap_from   = "downstream", swap_to  = "DB",
+  mut1_levels = c("UB1_MAPK10", "UB1_OPRK1", "UB1_OPRL1",
+                  "UB2_MAPK10", "UB2_OPRK1", "UB2_OPRL1",
+                  "UB3_MAPK10", "UB3_OPRK1", "UB3_OPRL1",
+                  "DB_MAPK10",  "DB_OPRK1",  "DB_OPRL1"),
+  mut2_levels = c("UB2_MAPK10", "UB2_OPRK1", "UB2_OPRL1",
+                  "UB3_MAPK10", "UB3_OPRK1", "UB3_OPRL1",
+                  "DB_MAPK10",  "DB_OPRK1",  "DB_OPRL1")
+)
+
+# Plot:
+  p1d <- plot_pred_obs(fit_up_2nd$predictions, "Upstream chimeras / 2nd order")
+  p2d <- plot_coeffs_2nd_order(coeffs_2ndorder_UBs,
+                               na_value = "grey",
+                               y_top    = 8.5,
+                               hline_y  = c(0.5, 3.5, 6.5, 9.5))
+```
+
+
+# Combined panels
+```{r summary-table}
+# Cross-validated performance of all four models in one place.
+data.table(
+  model   = c("Downstream 1st", "Downstream 2nd",
+              "Upstream 1st",   "Upstream 2nd"),
+  mean_R2 = c(fit_down_1st$mean_R2, fit_down_2nd$mean_R2,
+              fit_up_1st$mean_R2,   fit_up_2nd$mean_R2),
+  sd_R2   = c(sd(fit_down_1st$R2s), sd(fit_down_2nd$R2s),
+              sd(fit_up_1st$R2s),   sd(fit_up_2nd$R2s))
+)
+```
+
+```{r plot-all-pred, fig.width=8, fig.height=8}
+p1e <- ggarrange(p1a, p1b, p1c, p1d, nrow = 2, ncol = 2)
+p1e
+```
+
+```{r plot-all-pred-pdf}
+pdf(file.path(plot_dir, "Chimera_pred_models.pdf"), height = 8, width = 8)
+print(p1e)
+dev.off()
+```
+
+```{r plot-all-coeffs, fig.width=10, fig.height=4.25}
+p2e <- ggarrange(p2a, p2b, nrow = 1, ncol = 2)
+p2e
+
+p2f <- ggarrange(p2c, p2d, nrow = 1, ncol = 2)
+p2f
+```
+
+
+
+# ----- ΔRT plots
+
+# Prepare the talbe:
+```{r block-spec}
+
+genes <- c("AQP4", "MAPK10", "OPRK1", "OPRL1")
+
+# One row per analysis. This table is the whole configuration where to run the swap_delta_table() function on:
+block_spec <- list(
+  list(prefix = "downblock_1", label = "DB1",
+       focal  = "down_block1", others = c("down_block2", "down_block3"),
+       swap   = "upstream_swaps"),
+  list(prefix = "downblock_2", label = "DB2",
+       focal  = "down_block2", others = c("down_block1", "down_block3"),
+       swap   = "upstream_swaps"),
+  list(prefix = "downblock_3", label = "DB3",
+       focal  = "down_block3", others = c("down_block1", "down_block2"),
+       swap   = "upstream_swaps"),
+  list(prefix = "upblock_1", label = "UB1",
+       focal  = "up_block1", others = c("up_block2", "up_block3"),
+       swap   = "downstream_swaps"),
+  list(prefix = "upblock_2", label = "UB2",
+       focal  = "up_block2", others = c("up_block1", "up_block3"),
+       swap   = "downstream_swaps"),
+  list(prefix = "upblock_3", label = "UB3",
+       focal  = "up_block3", others = c("up_block1", "up_block2"),
+       swap   = "downstream_swaps")
+)
+
+# Short column names used in the saved objects.
+rename_down <- c(down_block1 = "DB1", down_block2 = "DB2",
+                 down_block3 = "DB3", upstream_swaps = "Upstream")
+rename_up   <- c(up_block1 = "UB1", up_block2 = "UB2",
+                 up_block3 = "UB3", downstream_swaps = "Downstream")
+```
+
+# Compute deltas:
+```{r compute}
+swap_deltas <- lapply(block_spec, function(s) {
+  swap_delta_table(swaps,
+                   focal    = s$focal,
+                   others   = s$others,
+                   swap_col = s$swap,
+                   genes    = genes)
+})
+names(swap_deltas) <- vapply(block_spec, `[[`, character(1), "label")
+```
+
+# Plot and save:
+```{r plot-individual, fig.height=5, fig.width=5}
+
+# Plot and save .pdfs:
+  for (s in block_spec) {
+    dt <- swap_deltas[[s$label]]
+  
+    # Print inline
+    for (g in plot_swap_deltas(dt, s$label)) print(g)
+  
+    # Write one PDF per from/to pair
+    save_swap_delta_plots(dt,
+                          prefix  = s$prefix,
+                          label   = s$label,
+                          out_dir = file.path(plot_dir, "delta_RT_chimeras"),
+                          width   = 5,
+                          height  = 5)
+  }
+
+# Save .rds files: 
+  for (s in block_spec) {
+    save_swap_deltas(
+      swap_deltas[[s$label]],
+      prefix     = s$prefix,
+      out_dir    = processed_dir,
+      rename_map = if (startsWith(s$focal, "down")) rename_down else rename_up
+    )
+  }
+```
+
+
+# Load the data generated above to plot Fig.5e and f:
+```{r warning=FALSE}
+# Downblocks 1:
+  downblock_1_fromMAPK10_to_OPRL1<-readRDS(file.path(processed_dir, "downblock_1_fromMAPK10_to_OPRL1.rds"))
+  downblock_1_fromMAPK10_to_OPRL1<-as.data.table(gather(downblock_1_fromMAPK10_to_OPRL1, block, gene, DB1:Upstream, factor_key=TRUE))
+  downblock_1_fromOPRK1_to_MAPK10<-readRDS(file.path(processed_dir, "downblock_1_fromOPRK1_to_MAPK10.rds"))
+  downblock_1_fromOPRK1_to_MAPK10<-as.data.table(gather(downblock_1_fromOPRK1_to_MAPK10, block, gene, DB1:Upstream, factor_key=TRUE))
+  downblock_1_fromOPRK1_to_AQP4<-readRDS(file.path(processed_dir, "downblock_1_fromOPRK1_to_AQP4.rds"))
+  downblock_1_fromOPRK1_to_AQP4<-as.data.table(gather(downblock_1_fromOPRK1_to_AQP4, block, gene, DB1:Upstream, factor_key=TRUE))
+  downblock_1_fromOPRL1_to_AQP4<-readRDS(file.path(processed_dir, "downblock_1_fromOPRL1_to_AQP4.rds"))
+  downblock_1_fromOPRL1_to_AQP4<-as.data.table(gather(downblock_1_fromOPRL1_to_AQP4, block, gene, DB1:Upstream, factor_key=TRUE))
+  
+# Downblocks 2:
+  downblock_2_fromAQP4_to_OPRL1<-readRDS(file.path(processed_dir, "downblock_2_fromAQP4_to_OPRL1.rds"))
+  downblock_2_fromAQP4_to_OPRL1<-as.data.table(gather(downblock_2_fromAQP4_to_OPRL1, block, gene, DB1:Upstream, factor_key=TRUE))
+  downblock_2_fromAQP4_to_MAPK10<-readRDS(file.path(processed_dir, "downblock_2_fromAQP4_to_MAPK10.rds"))
+  downblock_2_fromAQP4_to_MAPK10<-as.data.table(gather(downblock_2_fromAQP4_to_MAPK10, block, gene, DB1:Upstream, factor_key=TRUE))
+  downblock_2_fromMAPK10_to_OPRK1<-readRDS(file.path(processed_dir, "downblock_2_fromMAPK10_to_OPRK1.rds"))
+  downblock_2_fromMAPK10_to_OPRK1<-as.data.table(gather(downblock_2_fromMAPK10_to_OPRK1, block, gene, DB1:Upstream, factor_key=TRUE))
+  downblock_2_fromMAPK10_to_AQP4<-readRDS(file.path(processed_dir, "downblock_2_fromMAPK10_to_AQP4.rds"))
+  downblock_2_fromMAPK10_to_AQP4<-as.data.table(gather(downblock_2_fromMAPK10_to_AQP4, block, gene, DB1:Upstream, factor_key=TRUE))
+  
+# Downblocks 3:
+  downblock_3_fromMAPK10_to_OPRL1<-readRDS(file.path(processed_dir, "downblock_3_fromMAPK10_to_OPRL1.rds"))
+  downblock_3_fromMAPK10_to_OPRL1<-as.data.table(gather(downblock_3_fromMAPK10_to_OPRL1, block, gene, DB1:Upstream, factor_key=TRUE))
+  downblock_3_fromMAPK10_to_OPRK1<-readRDS(file.path(processed_dir, "downblock_3_fromMAPK10_to_OPRK1.rds"))
+  downblock_3_fromMAPK10_to_OPRK1<-as.data.table(gather(downblock_3_fromMAPK10_to_OPRK1, block, gene, DB1:Upstream, factor_key=TRUE))
+
+# Upstream
+  upblock_1_fromOPRK1_to_OPRL1<-readRDS(file.path(processed_dir, "upblock_1_fromOPRK1_to_OPRL1.rds"))
+  upblock_1_fromOPRK1_to_OPRL1<-as.data.table(gather(upblock_1_fromOPRK1_to_OPRL1, block, gene, UB1:Downstream, factor_key=TRUE))
+  upblock_1_fromAQP4_to_OPRL1<-readRDS(file.path(processed_dir, "upblock_1_fromAQP4_to_OPRL1.rds"))
+  upblock_1_fromAQP4_to_OPRL1<-as.data.table(gather(upblock_1_fromAQP4_to_OPRL1, block, gene, UB1:Downstream, factor_key=TRUE))
+  upblock_1_fromMAPK10_to_OPRL1<-readRDS(file.path(processed_dir, "upblock_1_fromMAPK10_to_OPRL1.rds"))
+  upblock_1_fromMAPK10_to_OPRL1<-as.data.table(gather(upblock_1_fromMAPK10_to_OPRL1, block, gene, UB1:Downstream, factor_key=TRUE))
+```
+
+
+
+
+# ΔRT vs starting RT
+```{r, warning=F, fig.height=8, fig.width=8}
+
+layout<-list(p, geom_point(color="#FF6666"), 
+             geom_errorbar(aes(ymin=delta_RT-sd_RT, ymax=delta_RT+sd_RT), width=.01,position=position_dodge(.9), height = 0, alpha = 0.6, linewidth = 0.6),
+             geom_errorbarh(aes(xmin=starting_RT-sd_starting_RT, xmax=starting_RT+sd_starting_RT), width=.01,position=position_dodge(.9), height = 0, alpha = 0.4, linewidth = 0.6),
+             geom_hline(yintercept=0, linetype="dashed"), labs(x="Starting RT", y="ΔRT"), 
+             theme(text = element_text(size = 15), plot.title = element_text(hjust = 0.5, size=14), axis.title = element_blank()))
+
+# Group 1:
+  p1x<-ggplot(downblock_1_fromOPRK1_to_AQP4[!duplicated(starting_RT)], aes(x=starting_RT, y=delta_RT)) + ggtitle("DB1_OPRK1 > AQP4") + layout
+  p1xx<-ggplot(downblock_1_fromOPRL1_to_AQP4[!duplicated(starting_RT)], aes(x=starting_RT, y=delta_RT)) + ggtitle("DB1_OPRL1 > AQP4") + layout
+  p1xxx<-ggplot(downblock_3_fromMAPK10_to_OPRK1[!duplicated(starting_RT)], aes(x=starting_RT, y=delta_RT)) + ggtitle("DB3_MAPK10 > OPRK1") + layout
+
+# Group 2:
+  p2x<-ggplot(downblock_2_fromAQP4_to_OPRL1[!duplicated(starting_RT)], aes(x=starting_RT, y=delta_RT)) + ggtitle("DB2_AQP4 > OPRL1") + layout
+  p2xx<-ggplot(downblock_2_fromMAPK10_to_AQP4[!duplicated(starting_RT)], aes(x=starting_RT, y=delta_RT)) + ggtitle("DB2_MAPK10 > AQP4") + layout
+  p2xxx<-ggplot(downblock_2_fromAQP4_to_MAPK10[!duplicated(starting_RT)], aes(x=starting_RT, y=delta_RT)) + ggtitle("DB2_AQP4 > MAPK10") + layout
+
+# Group 3:
+  p3x<-ggplot(downblock_1_fromMAPK10_to_OPRL1[!duplicated(starting_RT)], aes(x=starting_RT, y=delta_RT)) + ggtitle("DB1_MAPK10 > OPRL1") + layout
+  p3xx<-ggplot(downblock_2_fromMAPK10_to_OPRK1[!duplicated(starting_RT)], aes(x=starting_RT, y=delta_RT)) + ggtitle("DB2_MAPK10 > OPRK1") + layout
+  p3xxx<-ggplot(downblock_1_fromOPRK1_to_MAPK10[!duplicated(starting_RT)], aes(x=starting_RT, y=delta_RT)) + ggtitle("DB1_OPRK1 > MAPK10") + layout
+  
+p4<-ggarrange(p1x, p1xx, p1xxx,
+          p2x, p2xx, p2xxx,
+          p3x, p3xx, p3xxx,
+          ncol=3, nrow=3)
+
+p5<-annotate_figure(
+  p4,
+  left   = text_grob("ΔRT", rot = 90, size = 20),
+  bottom = text_grob("Starting RT", size = 20)
+)
+
+p5
+```
+
+```{r, warning=F}
+  pdf(file.path(plot_dir, "chimeras_deltaRT.pdf"), height = 8, width = 8)
+  print(p5); dev.off()
+```
+
+# ΔRT clustered by background blocks:
+```{r, warning=F, fig.width=7.5, fig.height=7}
+
+  p1<-list(p, theme(axis.text.x = element_blank(), axis.title = element_blank(),axis.ticks.x = element_blank(), legend.position = "none", plot.title = element_text(size=18)), geom_violin(), 
+           geom_jitter(alpha = .2, position = position_jitterdodge(jitter.width = .5)), facet_wrap(~block), labs(y="ΔRT"), gene_fills, scale_y_continuous(labels = scales::label_number(accuracy = 0.1)))
+  
+  pX<-ggplot(downblock_1_fromMAPK10_to_OPRL1[block!="DB1"], aes(x=gene, y=delta_RT, fill=gene)) + p1 + ggtitle("DB1_MAPK10 > OPRL1")
+  pXX<-ggplot(downblock_2_fromAQP4_to_OPRL1[block!="DB2"], aes(x=gene, y=delta_RT, fill=gene)) + p1 + ggtitle("DB2_AQP4 > OPRL1")
+  pXXX<-ggplot(downblock_2_fromAQP4_to_MAPK10[block!="DB2"], aes(x=gene, y=delta_RT, fill=gene)) + p1 + ggtitle("DB2_AQP4 > MAPK10")
+  pXXXX<-ggplot(downblock_2_fromMAPK10_to_OPRK1[block!="DB2"], aes(x=gene, y=delta_RT, fill=gene)) + p1 + ggtitle("DB2_MAPK10 > OPRK1")
+  
+  pY<-ggarrange(pX, pXX, pXXX, pXXXX,
+            ncol=2, nrow=2)
+  
+  pZ<-annotate_figure(
+    pY,
+    left   = text_grob("ΔRT", rot = 90, size = 20),
+  )
+  
+  pZ
+```
+
+```{r, warning=F}
+  pdf(file.path(plot_dir, "chimeras_deltaRT_Bb.pdf"), height = 7, width = 7.5)
+  print(pZ); dev.off()
+```
+
+

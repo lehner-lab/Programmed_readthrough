@@ -1,0 +1,496 @@
+---
+title: "Fig4"
+output: html_document
+date: "2026-08-28"
+---
+
+# --------------- Codon upstream of the PTC
+
+# Create the codon_upstream_dtbl, which contains the subset of variants with Mutation_type="Randomization of the 3nts_upstream of PTC".
+```{r, warning=F}
+  codon_upstream_dtbl<-LM_dtbl[reads>100 & !duplicated(LM_dtbl$nt_seq) & Mutation_type=="3nts_upstream_PTC_randomized"]
+  codon_upstream_dtbl[,c("aminoacid","nt-3","nt-2","nt-1"):=
+                        .(translate(s2c(Mutation)),substr(Mutation,1,1),substr(Mutation,2,2),substr(Mutation,3,3)), by=1:nrow(codon_upstream_dtbl)]
+  codon_upstream_dtbl$`nt-1`<-factor(codon_upstream_dtbl$`nt-1`, levels = c("T", "G", "C","A"))
+  codon_upstream_dtbl$`nt-2`<-factor(codon_upstream_dtbl$`nt-2`,levels=c("T","G","C","A"))
+  codon_upstream_dtbl$`nt-3` <- factor(codon_upstream_dtbl$`nt-3`,levels=c("T","G", "C","A"))
+  codon_upstream_dtbl[, aa:=c2s(seqinr::translate(s2c(Mutation))), by=1:nrow(codon_upstream_dtbl)]
+
+``` 
+
+# Show distributions for a) -1 codon b) all double/triple mutants and c) removing -1 mutations from the double/triple mutants set
+```{r, warning=F, fig.height=4, fig.width=8}
+
+# Get a) and b) mutants:
+  tmp<-LM_dtbl[reads>100 & Gene!="OPRL1" & !duplicated(LM_dtbl$nt_seq) & Mutation_type%chin%c("3nts_upstream_PTC_randomized", "aa_double_triple_mutants")]
+  tmp[Mutation_type=="3nts_upstream_PTC_randomized", short_mutation_type:="-1 Codon"]
+  tmp[Mutation_type=="aa_double_triple_mutants", short_mutation_type:="Double & Triple mutants"]
+
+# To get the c) mutations
+  tmp2<-LM_dtbl[reads>100 & Gene!="OPRL1" & !duplicated(LM_dtbl$nt_seq) & Mutation_type%chin%c("3nts_upstream_PTC_randomized", "aa_double_triple_mutants")]
+  tmp2<-tmp2[Mutation_type=="aa_double_triple_mutants"][(Gene%chin%c("AQP4", "MAPK10") & Position_mutated_1!=-1 & Position_mutated_2!=-1) | 
+                (Gene=="OPRK1" & Position_mutated_1!=-1 & Position_mutated_2!=-1 &   Position_mutated_3!=-1)][, short_mutation_type:="Double & Triple mutants \nexcluding -1 codon"]
+
+# Join:
+  tmp<-rbind(tmp, tmp2)
+
+# Plot:
+  p1<-Up_distributions<-ggplot(tmp, aes(y=RT, x=Gene)) + geom_violin() + facet_wrap(~short_mutation_type, ncol=6) + ylab("Readthrough (%)") + 
+    geom_segment(data = hline_data, aes(x = as.numeric(category) - 0.4, xend = as.numeric(as.factor(category)) + 0.4, y = intercept, yend = intercept), 
+                 color = "red", size = 0.5, linetype = "dashed") + p + theme(axis.text.x=element_text(angle=90, hjust=1, size=12), strip.text.x = element_text(size = 12))
+  p1
+``` 
+
+```{r, warning=F}
+pdf(file.path(plot_dir, "Up_distributions.pdf"), height = 4, width = 8)
+print(p1); dev.off()
+```
+
+
+
+# Mean readthrough across codons:
+Create the 'codons' dtbl, were we compare the RT elicited by each codon across the 3 genes:
+```{r, warning=}
+# Get the MAPK10 WT sequence and include it on the codons dtbl (it's not included by default because it's not annotated as '3nts_upstream_PTC_randomized'):
+  MAPK10_WT<-LM_dtbl[Gene=="MAPK10" & WT=="yes" & replicate==1 & reads>100 & Mutation_type=="CTAG_randomization", ]; MAPK10_WT[, Mutation:="AGG"]  
+  codons<-left_join(left_join(rbind(codon_upstream_dtbl[Gene=="MAPK10" , c("Mutation", "RT", "sd_RT")], MAPK10_WT[ ,c("Mutation", "RT", "sd_RT")]), 
+            codon_upstream_dtbl[Gene=="AQP4", c("Mutation", "RT", "sd_RT")], by="Mutation"), codon_upstream_dtbl[Gene=="OPRK1", c("Mutation", "RT", "sd_RT")], by="Mutation")
+  codons[, aminoacid:=translate(s2c(Mutation)), by=1:nrow(codons)]
+  #codons<-codons[aminoacid!="*"]
+  colnames(codons)<-c("codon", "RT_MAPK10", "sd_RT_MAPK10", "RT_AQP4", "sd_RT_AQP4", "RT_OPRK1", "sd_RT_OPRK1", "aminoacid")
+ # For AQP4 and OPRK1, the GTA codons is the WT codon and it's not in the tbl because it's not in the mutation_type=3nts_upstream_PTC_randomized. For MAPK10 it's AGG.
+ # I introduce the RT and sd-RT values manually:
+    codons[codon=="GTA", c("RT_AQP4", "sd_RT_AQP4", "RT_OPRK1", "sd_RT_OPRK1"):=.(0.68, 0.05, 1.4, 0.04)]
+    codons[codon=="AGG", c("RT_MAPK10", "sd_RT_MAPK10"):=.(1.77, 0.044)]
+
+ # Calculate the mean and sd fitness of each mutation across the 3 genes: 
+    codons[, c("mean", "sd"):=.(mean(c(RT_MAPK10, RT_AQP4, RT_OPRK1), na.rm=T), sd(c(RT_MAPK10, RT_AQP4, RT_OPRK1), na.rm=T)), by=1:nrow(codons)]
+    colnames(codons)<-c("codon", "RT_MAPK10", "sd_RT_MAPK10", "RT_AQP4", "sd_RT_AQP4", "RT_OPRK1", "sd_RT_OPRK1", "aminoacid", "RT_mean", "RT_sd")
+``` 
+
+
+# Readthrough for each variant + errors across the 3 replicates:
+
+```{r, warning=F}
+
+# --- 1) Define the amino-acid order you want on the x axis ---
+# Edit this vector to your preferred order (these are example 3-letter codes).
+aa_order <- c(
+  "*", "F","L","I","M","V",
+  "S","P","T","A",
+  "Y","H","Q","N","K",
+  "D","E","C","W","R","G"
+)
+
+# --- 2) Within-amino-acid codon order (optional) ---
+# If you want a specific within-AA order, put codons in the order you want.
+# If you leave this NULL, codons will be ordered alphabetically within each AA.
+codon_within_order <- NULL
+# codon_within_order <- c("TTT","TTC","TTA","TTG", ...)  # your preferred order
+
+# --- 3) Build the factor levels for codon ---
+codon_levels <- codons %>%
+  mutate(
+    codon = as.character(codon),
+    aminoacid = as.character(aminoacid),
+    aminoacid = factor(aminoacid, levels = aa_order)
+  ) %>%
+  filter(!is.na(aminoacid)) %>%                 # drops anything not in aa_order
+  distinct(codon, aminoacid) %>%                # one row per codon
+  arrange(aminoacid, codon) %>%                 # alphabetical codon within AA
+  pull(codon)
+
+
+codon_levels<-c(codon_levels[4:64], c("TAA", "TAG", "TGA"))
+# --- 4) Apply ordering to your data ---
+codons_ordered <- codons %>%
+  mutate(
+    codon = factor(as.character(codon), levels = codon_levels)
+  )
+
+# Save codon_levels, bc we'll use the object recurently later on. Save it at the begining of hte script.
+```
+
+Plot:
+```{r, warning=F, fig.height=10.5, fig.width=7}
+
+pp<-p + theme(axis.text.x=element_text(size=7, angle=90, vjust=0.5), axis.title.x=element_blank(), axis.title.y=element_blank(), title = element_text(size=15))
+
+pE<-ggplot(codons_ordered, aes(x = codon, y = RT_AQP4, label=aminoacid)) + geom_boxplot() + 
+   geom_text(aes(y = 0, label = aminoacid), vjust = 0, size=3.5) + pp + ggtitle("AQP4") +
+        geom_errorbar(aes(ymin=RT_AQP4-sd_RT_AQP4, ymax=RT_AQP4+sd_RT_AQP4), width=.01,position=position_dodge(.9)) +
+        scale_y_continuous(breaks = c(0, 1, 2))
+
+pF<-ggplot(codons_ordered, aes(x = codon, y = RT_OPRK1, label=aminoacid)) + geom_boxplot() + 
+   geom_text(aes(y = 0, label = aminoacid), vjust = 0, size=3.5) + pp + ggtitle("OPRK1") +
+        geom_errorbar(aes(ymin=RT_OPRK1-sd_RT_OPRK1, ymax=RT_OPRK1+sd_RT_OPRK1), width=.01,position=position_dodge(.9))
+
+pG<-ggplot(codons_ordered, aes(x = codon, y = RT_MAPK10, label=aminoacid)) + geom_boxplot() + 
+   geom_text(aes(y = 0, label = aminoacid), vjust = 0, size=3.5) + pp + ggtitle("MAPK10") +
+        geom_errorbar(aes(ymin=RT_MAPK10-sd_RT_MAPK10, ymax=RT_MAPK10+sd_RT_MAPK10), width=.01,position=position_dodge(.9))
+
+pH<-ggarrange(pE, pF, pG, nrow=3)
+pH<-annotate_figure(
+  pH,
+  left   = text_grob("Readthrough(%)", rot = 90, size = 20),
+  bottom = text_grob("Upstream codon", size = 20)
+)
+pH
+
+```
+
+
+```{r, warning=F}
+pdf(file.path(plot_dir, "up1_correlations_ordered.pdf"), height = 10.5, width = 7.2)
+print(pH); dev.off()
+```
+
+# Correlations:
+```{r, warning=F, fig.height=3, fig.width=9}  
+
+ppp<-p + theme(axis.title.x=element_text(size=18), axis.title.y=element_text(size=18))
+
+  p1<-ggplot(codons, aes(x=RT_AQP4, y=RT_OPRK1)) + geom_point() + stat_cor(aes(label = ..r.label..), size=7) + ppp + xlab("AQP4") + ylab("OPRK1")
+  p2<-ggplot(codons, aes(x=RT_AQP4, y=RT_MAPK10)) + geom_point() + stat_cor(aes(label = ..r.label..), size=7) + ppp + xlab("AQP4") + ylab("MAPK10")
+  p3<-ggplot(codons, aes(x=RT_MAPK10, y=RT_OPRK1)) + geom_point() + stat_cor(aes(label = ..r.label..), size=7) + ppp + xlab("MAPK10") + ylab("OPRK1")
+  
+  p4<-ggarrange(p1, p2, p3, nrow=1)
+  p4
+```
+
+
+```{r, warning=F}
+pdf(file.path(plot_dir, "up1_correlations.pdf"), height = 3, width = 9)
+print(p4); dev.off()
+```
+
+
+# Compute the pairwise abs(RT difference) across codons at 1 hamming distance away (compare only codons which have a 1nt difference, to control for 1ary sequence difference. Different AA codons are more different at the 1ary sequence level, and that would be a confounder). 
+
+```{r, warning=F}
+# Use the rt_diffs_hd1_by_gene function():
+
+  out_pairs <- as.data.table(rt_diffs_hd1_by_gene(codon_upstream_dtbl[, c("Mutation", "aa", "Gene", "RT")]))
+  out_pairs[aa1==aa2, same_aa:="Same"]
+  out_pairs[aa1!=aa2, same_aa:="Different"]
+  out_pairs$same_aa <- factor(out_pairs$same_aa, levels = c("Same", "Different"))
+
+```
+
+# Plot:
+```{r, warning=F, fig.height=5, fig.width=4.5}  
+my_stat_compare <- function(comparisons) { 
+  stat_compare_means(aes(group = same_aa), comparisons = comparisons,  method = "wilcox.test", p.adjust.method = "BH", label = "p.adj", 
+                     tip.length = 0, label.y = max(out_pairs$RT_absdiff, na.rm = TRUE) * 1.1
+)}
+
+# Variatns per condition, to prove that statistics are robust: 66 and 213
+  out_pairs[Gene=="AQP4" & same_aa=="Same", .N]; out_pairs[Gene=="AQP4" & same_aa=="Different", .N]
+  out_pairs[Gene=="OPRK1" & same_aa=="Same", .N]; out_pairs[Gene=="OPRK1" & same_aa=="Different", .N]
+  out_pairs[Gene=="MAPK10" & same_aa=="Same", .N]; out_pairs[Gene=="MAPK10" & same_aa=="Different", .N]
+
+# compute p-values per Gene
+  dodge <- 0.75
+  pv <- as.data.table(out_pairs %>%
+    group_by(Gene) %>%
+    wilcox_test(RT_absdiff ~ same_aa) %>%
+    adjust_pvalue(method = "BH") %>%
+    add_xy_position(x = "Gene", dodge = dodge))
+  
+  pv[, xmin:=xmin-0.12]
+  pv[, xmax:=xmax+0.12]
+
+p5<-ggplot(out_pairs, aes(y=RT_absdiff, x=Gene, fill=same_aa)) + 
+  geom_boxplot(outlier.shape = NA, position = position_dodge(0.75)) + p +
+  scale_fill_manual(name = "Encoded AA", values = alpha(c("#99004C", "#2B2E33"), alpha=0.75)) +
+  geom_jitter(alpha = .2, position = position_jitterdodge(jitter.width = 0.3, dodge.width = 0.75)) +
+  stat_pvalue_manual(pv, label = "p.adj", tip.length = .01, size=4.5) +
+  coord_cartesian(clip = "off") + 
+  xlab("") + ylab("ΔRT") +
+  theme(legend.title=element_text(size=14), legend.text=element_text(size=14), legend.position="top")
+p5
+
+
+```
+
+```{r, warning=F}
+pdf(file.path(plot_dir, "same_diff_AA.pdf"), height = 5, width = 4.5)
+print(p5); dev.off()
+```
+
+
+
+
+# --------- Double/triple mutants upstream of the PTC
+
+Create the double_triple_up, which contains the subset of variants with Mutation_type="aa_double_triple_mutants".
+```{r, warning=F}
+
+  double_triple_up<-LM_dtbl[reads>100 & !duplicated(LM_dtbl$nt_seq) & Mutation_type=="aa_double_triple_mutants"]
+  double_triple_up[, table(PTC)] # there are no mutants with an extra PTC
+  
+  # Make the new columns "Mut1", "Mut2" and "Mut3" showing the position and the codon together:
+  double_triple_up[, Mut1:=paste0(Position_mutated_1, "_", Mutation_1)]
+  double_triple_up[, Mut2:=paste0(Position_mutated_2, "_", Mutation_2)]
+  double_triple_up[, Mut3:=paste0(Position_mutated_3, "_", Mutation_3)]
+  
+```
+  
+```{r, warning=F, fig.width=3, fig.height=3}
+
+# Dynamic range:  
+  ggplot(double_triple_up[Gene!="OPRL1"], aes(y=RT, x=Gene)) + geom_boxplot() + ylab("Readthrough (%)") + 
+    p + theme(axis.text.x=element_text(angle=90, hjust=1, size=12), strip.text.x = element_text(size = 12), title=element_text(size=12)) + 
+    ggtitle("aa_double_triple_mutants") + xlab("") + ylab("")
+    
+# Dynamic range after removing -1 mutants:
+  ggplot(double_triple_up[Gene%chin%c("MAPK10", "AQP4") & Position_mutated_1!="-1" & Position_mutated_2!="-1"], aes(y=RT, x=Gene)) + geom_boxplot() + ylab("Readthrough (%)") + 
+   p + theme(axis.text.x=element_text(size=12), strip.text.x = element_text(size = 12), title=element_text(size=12)) + ggtitle("Without -1 mutants") + xlab("") + ylab("")
+  
+  ggplot(double_triple_up[Gene%chin%c("OPRK1") & Position_mutated_1!="-1" & Position_mutated_2!="-1" & Position_mutated_3!="-1"], aes(y=RT, x=Gene)) + 
+    geom_boxplot() + ylab("Readthrough (%)") + ggtitle("Without -1 mutants") + xlab("") + ylab("") + 
+    p + theme(axis.text.x=element_text(size=12), strip.text.x = element_text(size = 12), title=element_text(size=12)) 
+  
+
+``` 
+
+# Fit models to get the coefficients of each codon-position pair.
+# Create the columns needed for model fitting:
+```{r, warning=F}
+double_triple_up[, up_seq:=unlist(strsplit(nt_seq, "TGACTAG"))[1], by=1:nrow(double_triple_up)]
+double_triple_up[, "up1_codon":=substr(up_seq, nchar(up_seq)-2, nchar(up_seq)), by=1:nrow(double_triple_up)]
+double_triple_up[, "up2_codon":=substr(up_seq, nchar(up_seq)-5, nchar(up_seq)-3), by=1:nrow(double_triple_up)]
+double_triple_up[, "up3_codon":=substr(up_seq, nchar(up_seq)-8, nchar(up_seq)-6), by=1:nrow(double_triple_up)]
+double_triple_up[, "up4_codon":=substr(up_seq, nchar(up_seq)-11, nchar(up_seq)-9), by=1:nrow(double_triple_up)]
+double_triple_up[, "up5_codon":=substr(up_seq, nchar(up_seq)-14, nchar(up_seq)-12), by=1:nrow(double_triple_up)]
+double_triple_up[, "up6_codon":=substr(up_seq, nchar(up_seq)-17, nchar(up_seq)-15), by=1:nrow(double_triple_up)]
+double_triple_up[, "up7_codon":=substr(up_seq, nchar(up_seq)-20, nchar(up_seq)-18), by=1:nrow(double_triple_up)]
+double_triple_up[, "up8_codon":=substr(up_seq, nchar(up_seq)-23, nchar(up_seq)-21), by=1:nrow(double_triple_up)]
+double_triple_up[, "up9_codon":=substr(up_seq, nchar(up_seq)-26, nchar(up_seq)-24), by=1:nrow(double_triple_up)]
+
+# Generate the aa analog columns:
+  for (i in 1:6){
+    double_triple_up[, paste0("up", i, "_aa"):=c2s(seqinr::translate(s2c(get(paste0("up", i, "_codon"))))), by=.I]
+  }
+
+  for (i in 7:9){
+    double_triple_up[Gene%chin%c("OPRK1"), paste0("up", i, "_aa"):=c2s(seqinr::translate(s2c(get(paste0("up", i, "_codon"))))), by=.I]
+  }
+
+# And concatenate them in the 'up_peptide':
+  double_triple_up[, up_peptide:=paste0(up1_aa, up2_aa, up3_aa, up4_aa, up5_aa, up6_aa), by=.I]
+  double_triple_up[Gene%chin%c("OPRK1"), up_peptide:=paste0(up1_aa, up2_aa, up3_aa, up4_aa, up5_aa, up6_aa, up7_aa, up8_aa, up9_aa), by=.I]
+
+
+# Small tweak to render it runnable by the 'RTmodel_fc' -> add a dummy "treatment" and "viral" column, plus calculate RT_binomial. 
+  double_triple_up[, c("viral", "treatment"):=.("no", "dummy")]
+  double_triple_up[, RT_binomial:=RT/100, by=1:nrow(double_triple_up)]
+```
+
+# Because it's a sparse/shallow mutagenesis, I encounter the problem that mutations in the test set might not be seen in the training set. And so I can't fit crossvalidated models.
+
+# Fit models without crossvalidation. Mostly interested in coefficients, not predictions:
+# Use the same WT (ref) across models, so we can compare coefficients. All predictions are referenced to GCA. 
+```{r, warning=F, fig.width=12, fig.height=6}
+
+# Generate the necessary objects: 
+  coeffs<-list(); predictions<-list()
+  Genes<-c("AQP4", "MAPK10")
+
+for (j in 1:length(Genes)){
+      tmp_df<-double_triple_up[Gene==Genes[j] & !is.na(RT_binomial)] # Store the subset of double_triple_up we want to work with (applying the desired filters)
+      # To use the WT as refernce for each position and gene:
+        predictors<-c("up1_codon", "up2_codon", "up3_codon", 
+                      "up4_codon", "up5_codon", "up6_codon")
+          tmp_df$up1_codon<-factor(tmp_df$up1_codon, levels=codon_levels)
+          tmp_df$up2_codon<-factor(tmp_df$up2_codon, levels=codon_levels)
+          tmp_df$up3_codon<-factor(tmp_df$up3_codon, levels=codon_levels)
+          tmp_df$up4_codon<-factor(tmp_df$up4_codon, levels=codon_levels)
+          tmp_df$up5_codon<-factor(tmp_df$up5_codon, levels=codon_levels)
+          tmp_df$up6_codon<-factor(tmp_df$up6_codon, levels=codon_levels)
+          if (Genes[j]=="OPRK1"){
+            predictors<-c("up1_codon", "up2_codon", "up3_codon", "up4_codon", "up5_codon", 
+                          "up6_codon", "up7_codon", "up8_codon", "up9_codon")
+            tmp_df$up7_codon<-factor(tmp_df$up7_codon, levels=codon_levels)
+            tmp_df$up8_codon<-factor(tmp_df$up8_codon, levels=codon_levels)
+            tmp_df$up9_codon<-factor(tmp_df$up9_codon, levels=codon_levels)
+            }
+        # Use the scaling_fc to rescale the RT_binomial to c(0,1) to get a good logistic regression fit.  
+          scaling_fc(tmp_df, "min", "max", "subset_df")
+      
+        # Build and save the models
+          formula_obj <- as.formula(paste("RT_binomial ~", paste(predictors, collapse = " + ")))
+          model_1<- glm(formula_obj, tmp_df, family="binomial")
+
+        # Make predictions and rescale back from c(0,1) to the original distribution using the rescaling_fc() function.
+          preds_tmp<-data.frame(predicted=predict(model_1, tmp_df, type = "response"), observed=tmp_df$RT_binomial, Gene=Genes[j]) 
+          rescaling_fc(preds_tmp, "predictions_rescaled")
+          predictions[[j]]<-predictions_rescaled
+          
+        # Store coefficients into all_coeffs df. We can specifiy if we want to run this bit of the code with the 'coeffs' argument.
+          coeffs[[j]]<-data.frame(coefficients(model_1), Gene=Genes[j]) 
+          names<-rownames(coeffs[[j]])
+          coeffs[[j]]<-as.data.table(coeffs[[j]])
+          coeffs[[j]][, id:=names]
+          coeffs[[j]][, pos:=substr(id, 1,3), by=1:nrow(coeffs[[j]])]
+          coeffs[[j]][, codon:=substr(id, 10,12), by=1:nrow(coeffs[[j]])]
+          if (Genes[j]=="OPRK1"){
+             coeffs[[j]]$pos<-factor(coeffs[[j]]$pos, levels=c("up9", "up8", "up7", "up6", "up5", "up4", "up3", "up2", "up1"))
+             coeffs[[j]][pos=="up1", Position_num:="-1"]; coeffs[[j]][pos=="up2", Position_num:="-2"]; coeffs[[j]][pos=="up3", Position_num:="-3"]
+             coeffs[[j]][pos=="up4", Position_num:="-4"]; coeffs[[j]][pos=="up5", Position_num:="-5"]; coeffs[[j]][pos=="up6", Position_num:="-6"]
+             coeffs[[j]][pos=="up7", Position_num:="-7"]; coeffs[[j]][pos=="up8", Position_num:="-8"]; coeffs[[j]][pos=="up9", Position_num:="-9"] 
+             coeffs[[j]]$Position_num<-factor(coeffs[[j]]$Position_num, levels=c("-9", "-8", "-7", "-6", "-5", "-4", "-3", "-2", "-1"))
+          }
+          else if (Genes[j]!="OPRK1"){
+             coeffs[[j]]$pos<-factor(coeffs[[j]]$pos, levels=c("up6", "up5", "up4", "up3", "up2", "up1"))
+             coeffs[[j]][pos=="up1", Position_num:="-1"]; coeffs[[j]][pos=="up2", Position_num:="-2"]; coeffs[[j]][pos=="up3", Position_num:="-3"]
+             coeffs[[j]][pos=="up4", Position_num:="-4"]; coeffs[[j]][pos=="up5", Position_num:="-5"]; coeffs[[j]][pos=="up6", Position_num:="-6"]
+             coeffs[[j]]$Position_num<-factor(coeffs[[j]]$Position_num, levels=c("-6", "-5", "-4", "-3", "-2", "-1"))
+          }
+    }
+    
+  predictions<-rbindlist(predictions)
+  coeffs_up_sameWT<-rbindlist(coeffs)
+  setnames(coeffs_up_sameWT, colnames(coeffs_up_sameWT), c("Coefficient", "Gene", "id", "Position", "Codon", "Position_num"))
+# Calculate the mean absolute value of coefcieints per position, to get a sense of each psosition infliuence on RT:
+  coeffs_up_sameWT[, coeffs_mean:=mean(abs(Coefficient), na.rm=T), by=c("Position", "Gene")]
+  coeffs_up_sameWT[, coeffs_SD:=sd(abs(Coefficient), na.rm=T)/ sqrt(sum(!is.na(Coefficient))), by=c("Position", "Gene")]
+# Generate the aminoacid column:
+  coeffs_up_sameWT[id!="(Intercept)", aminoacid:=c2s(seqinr::translate(s2c(Codon))), by=.I]
+
+  
+  coeffs_up_sameWT_wide <- as.data.table(spread(coeffs_up_sameWT[!is.na(Position), c("Coefficient", "Gene", "Position", "Position_num", "Codon")], Gene, Coefficient))
+  coeffs_up_sameWT_wide$Position_num<-factor(coeffs_up_sameWT_wide$Position_num, levels=rev(c("-9", "-8", "-7", "-6", "-5", "-4", "-3", "-2", "-1")))
+  
+# Adding missing codons for each gene-position combination with NAs, to distinguish them well in the heatmap:
+  # Do this by creating the full grid of Gene × Position_num × Codon and then merging your existing coeffs onto it (so missing combos become new rows with NA)
+
+    grid <- CJ(
+        Gene = unique(coeffs_up_sameWT$Gene),
+        Position_num = unique(coeffs_up_sameWT[!is.na(Position_num), unique(Position_num)]),
+        Codon = codon_levels, # use codon levels from the above script
+        unique = TRUE
+      )
+    
+  # left join: keep all grid rows, bring in existing columns from coeffs_up_sameWT
+    coeffs_up_sameWT_full <- merge(
+      grid,
+      coeffs_up_sameWT,
+      by = c("Gene", "Position_num", "Codon"),
+      all.x = TRUE,
+      sort = FALSE
+    )
+    
+# Use the codon_levels object generated a few scripts above to factorize the codon column and sort them by aminoacid:
+  coeffs_up_sameWT_full$Codon = factor(coeffs_up_sameWT_full$Codon, levels = codon_levels)
+  coeffs_up_sameWT_full$Position_num<-factor(coeffs_up_sameWT_full$Position_num, levels=(c("-9", "-8", "-7", "-6", "-5", "-4", "-3", "-2", "-1")))
+
+
+#coeffs_up_sameWT_full<-readRDS(file = file.path(home_LM, "coeffs_up_sameWT_full.rds"))
+
+p6<-ggplot(coeffs_up_sameWT_full[Gene%chin%c("AQP4", "MAPK10", "OPRK1")], 
+      aes(x = Position_num, y = Codon, fill = Coefficient, label=aminoacid)) + 
+      scale_color_manual(values = c(yes = "black", no = NA)) + 
+      geom_tile(linewidth = 0.6) + scale_fill_gradient2( low = "red", mid="white", high = "blue", na.value = "grey", name = "Coeffs") + 
+      geom_text(data=coeffs_up_sameWT[Position=="up1" & !is.na(Position)], aes(x = "-1", label = aminoacid), vjust = 0.5, size=3, fontface = "plain") +
+      labs(x = "Codon upstream", y = "Codon") + p +
+      theme(axis.title.y=element_blank(), axis.text.y=element_text(size=5.5), plot.margin  = margin(5.5, 5.5, 5.5, 35)) + 
+      facet_wrap(~Gene, scales="free")
+p6
+
+```
+
+```{r, warning=F}
+pdf(file.path(plot_dir, "coeffs_heatmap.pdf"), height = 6.5, width = 9)
+print(p6); dev.off()
+```
+
+# Plot:
+```{r, warning=F, fig.width=4.2, fig.height=5.5}
+
+p7<-ggplot(coeffs_up_sameWT[!is.na(Position), .SD[1], by = .(Gene, Position_num)], aes(y=coeffs_mean, x=Position_num, fill=Gene)) + gene_fills + 
+  geom_col(position = position_dodge(width = 0.7), width = 0.7) + 
+    geom_errorbar(
+    aes( ymin = coeffs_mean - coeffs_SD, ymax = coeffs_mean + coeffs_SD),
+    position = position_dodge(width = 0.7),
+    width = 0.15
+  ) +  
+  theme(legend.position="top", legend.title=element_text(size=18), legend.text=element_text(size=12)) + 
+  ylab("Mean coefficient size") + xlab("Upstream codon") + p
+
+p7 
+```
+
+```{r, warning=F}
+pdf(file.path(plot_dir, "coeffs_mean.pdf"), height = 5, width = 4.5)
+print(p7); dev.off()
+```
+
+
+
+# Plot AQP4vsMAPK10 coefficients correlations:
+```{r, warning=F, fig.width=4, fig.height=6.5}
+
+p_alt<-list(p, theme(text=element_text(size=18), strip.text.x = element_blank(), axis.text.x=element_blank(), axis.text.y=element_blank(), 
+                     axis.title.y=element_blank(), axis.title.x=element_blank(), axis.ticks = element_blank()))
+
+indexes<-rev(coeffs_up_sameWT_wide[, unique(Position_num)])
+list_plots<-list()
+for (i in 1:length(indexes)){
+    pl2<-ggplot(coeffs_up_sameWT_wide[Position_num==indexes[i] & !is.na(AQP4) & !is.na(MAPK10)], aes(x=AQP4, y=MAPK10)) + geom_point(alpha=.5, size=2) + 
+    stat_cor(aes(label = ..r.label..), size=6, hjust = 0, vjust = 1) + facet_wrap(~Position_num, scales="free") + p_alt
+  list_plots[[i]]<-annotate_figure(
+    pl2, 
+    top = text_grob(indexes[i], size = 20)
+    )
+}
+
+pl6<-ggarrange(plotlist=list_plots, nrow=3, ncol=2)
+pl7<-annotate_figure(
+    pl6,
+    bottom = text_grob("AQP4", size = 20),
+    left = text_grob("MAP1K0", size = 20, rot=90)
+)
+pl7
+```
+
+
+```{r, warning=F}
+pdf(file.path(plot_dir, "coeffs_up_cors_B.pdf"), height = 6.5, width = 4)
+print(pl7); dev.off()
+```
+
+
+# Inter-positions coefficients correlations:
+```{r, warning=F, fig.width=12, fig.height=8}
+
+coeffs_up_sameWT_wide2 <- as.data.table(spread(coeffs_up_sameWT[!is.na(Position), 
+                                c("Coefficient", "Gene", "Position", "Codon")], Position, Coefficient))
+
+genes<-coeffs_up_sameWT_wide2[, unique(Gene)]
+cors<-list()
+for (i in 1:length(genes)){
+  cols <- setdiff(names(coeffs_up_sameWT_wide2), c("Gene", "Codon"))
+  cor_mat<-unlist(cor(coeffs_up_sameWT_wide2[Gene==genes[i], ..cols], use = "pairwise.complete.obs"))
+  cor_dt <- as.data.table(as.table(cor_mat))
+  setnames(cor_dt, c("col1", "col2", "correlation"))
+  cor_dt[, Gene:=genes[i]]
+  cors[[i]] <- cor_dt[col1 < col2]
+  print(mean(abs(cors[[i]]$correlation)))
+}
+
+p1<-ggpairs(coeffs_up_sameWT_wide2[Gene=="AQP4"][,c(3:8)]) + p
+p1
+
+p2<-ggpairs(coeffs_up_sameWT_wide2[Gene=="MAPK10"][,c(3:8)]) + p
+p2
+```
+
+```{r, warning=F}
+pdf(file.path(plot_dir, "interpostions_up_cors_AQP4.pdf"), height = 10, width = 10)
+print(p1); dev.off()
+
+pdf(file.path(plot_dir, "interpostions_up_cors_MAPK10.pdf"), height = 10, width = 10)
+print(p2); dev.off()
+```
+
