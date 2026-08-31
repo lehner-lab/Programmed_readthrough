@@ -23,5 +23,5 @@ conda activate Programmed_readthrough
 After setting up the environment and placing the data in the correct directories, you can run the entire pipeline using the main Python script:
 
 ```
-Rscript run_all.R
+Rscript Run_all.R
 ```
